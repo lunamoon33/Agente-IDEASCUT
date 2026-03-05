@@ -1,27 +1,14 @@
 {
-  "dependencies": {
-    "@superdapp/agents": "^1.0.1",
-    "axios": "^1.13.6",
-    "express": "^5.2.1",
-    "node-cron": "^4.2.1"
-  },
   "name": "agente-ideascut",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "main": "index.mjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.mjs"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/lunamoon33/Agente-IDEASCUT.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/lunamoon33/Agente-IDEASCUT/issues"
-  },
-  "homepage": "https://github.com/lunamoon33/Agente-IDEASCUT#readme"
+  "dependencies": {
+    "@superdapp/agents": "1.0.1",
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3"
+  }
 }
