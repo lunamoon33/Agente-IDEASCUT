@@ -67,7 +67,7 @@ agent.addCommand('/nicho', async ({ replyMessage }) => {
 app.post('/webhook', async (req, res) => {
   try {
     const body = req.body;
-    console.log('Recibido:', JSON.stringify(body).slice(0, 200));
+    console.log('Recibido:', JSON.stringify(body, null, 2));
     if (body && body.challenge) return res.status(200).send(body.challenge);
     await agent.processRequest(body);
     res.status(200).send('OK');
