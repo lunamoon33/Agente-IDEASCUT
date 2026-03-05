@@ -50,7 +50,7 @@ async function analyzeWithGemini(keyword, mentions, example) {
     );
     return r.data.candidates[0].content.parts[0].text;
   } catch(e) {
-    console.error('Gemini error:', e.message);
+    console.error('Gemini error:', e.response?.data || e.message);
     return null;
   }
 }
