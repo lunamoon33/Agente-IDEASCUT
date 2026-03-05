@@ -68,8 +68,39 @@ app.post('/webhook', async (req, res) => {
   try {
     const body = req.body;
     console.log('Recibido:', JSON.stringify(body, null, 2));
+
     if (body && body.challenge) return res.status(200).send(body.challenge);
-    await agent.processRequest(body);
+
+    // Parsear el mensaje de SuperDapp
+    let messageText = '';
+    try {
+      const bodyField = body.body;
+      if (bodyField) {
+        const parsed = JSON.parse(bodyField);
+        const inner = parsed.m ? JSON.parse(decodeURIComponent(parsed.m)) : null;
+        messageText = inner ? inner.body : '';
+      }
+    } catch(e) {
+      console.log('Error parseando mensaje:', e.message);
+    }
+
+    console.log('Mensaje:', messageText);
+    const roomId = body.roomId;
+
+    if (messageText === '/start') {
+      await agent.sendMessage(roomId, 'Soy IdeaScout. Detecto oportunidades en Hacker News.\n/reporte - ver analisis\n/nicho - explorar nichos');
+    } else if (messageText === '/reporte') {
+      await agent.sendMessage(roomId, 'Analizando...');
+      const report = await analyzePatterns();
+      await agent.sendMessage(roomId, report);
+    } else if (messageText === '/nicho') {
+      if (Object.keys(patternCount).length === 0) await analyzePatterns();
+      const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
+      if (top.length === 0) return await agent.sendMessage(roomId, 'No hay patrones aun.');
+      const text = top.map(([kw,c], i) => (i+1) + '. ' + kw + ' (' + c + ' menciones)').join('\n');
+      await agent.sendMessage(roomId, 'Nichos detectados:\n\n' + text);
+    }
+
     res.status(200).send('OK');
   } catch (e) {
     console.error('Error webhook:', e.message);
