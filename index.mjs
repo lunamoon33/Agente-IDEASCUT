@@ -12,32 +12,29 @@ const API_TOKEN = process.env.API_TOKEN || '';
 const GROQ_API_KEY = process.env.Groq_IA || '';
 const agent = new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' });
 
-const KEYWORDS = [
-  // Problemas de negocio
-  'we built', 'we launched', 'show hn', 'ask hn',
-  // Frustraciones técnicas  
-  'frustrated with', 'tired of', 'why is there no',
-  'nobody solves', 'still no good solution',
-  // Sectores emergentes
-  'ai agent', 'automation', 'no code', 'web3',
-  'remote work', 'creator economy', 'fintech',
-  // Problemas clásicos sin resolver
-  'document verification', 'fraud', 'compliance',
-  'identity', 'privacy', 'data breach'
+const SEARCH_QUERIES = [
+  'ask hn who wants',
+  'ask hn is there a tool',
+  'ask hn why is there no',
+  'ask hn looking for',
+  'frustrated no solution',
+  'why doesnt exist',
+  'built this because',
+  'nobody has solved'
 ];
-let patternCount = {};
-let topStories = {};
 
-async function searchHackerNews(keyword) {
+async function searchHackerNews(query) {
   try {
     const r = await axios.get(
-      'https://hn.algolia.com/api/v1/search?query=' + encodeURIComponent(keyword) + '&tags=story&hitsPerPage=100'
+      'https://hn.algolia.com/api/v1/search?query=' + encodeURIComponent(query) +
+      '&tags=story&hitsPerPage=30'
     );
     const hits = r.data.hits;
     const example = hits[0]?.title || '';
-    return { count: hits.length, example };
+    const snippet = hits[0]?.story_text?.slice(0, 200) || '';
+    return { count: hits.length, example, snippet };
   } catch(e) {
-    return { count: 0, example: '' };
+    return { count: 0, example: '', snippet: '' };
   }
 }
 async function searchDevTo(keyword) {
@@ -52,15 +49,18 @@ async function searchDevTo(keyword) {
     return { count: 0, example: '' };
   }
 }
-async function analyzeWithGemini(keyword, mentions, example) {
+async function analyzeWithGemini(keyword, mentions, example, snippet) {
   if (!GROQ_API_KEY) return null;
   try {
-    const prompt = 'Eres un analista de mercado. El tema "' + keyword + '" tiene ' + mentions + ' discusiones en Hacker News. ' +
-      (example ? 'Ejemplo de discusion: "' + example + '". ' : '') +
-      'En español, responde exactamente en este formato:\n' +
-      'ANALISIS: (2 lineas explicando por que es una oportunidad real)\n' +
-      'OPORTUNIDADES: (2 ideas de producto concretas, una por linea con guion)\n' +
-      'PREGUNTA: (una pregunta corta para la comunidad)';
+    const prompt = 'Eres un analista de oportunidades de mercado. Personas en comunidades técnicas están buscando: "' + keyword + '". ' +
+      'Hay ' + mentions + ' discusiones sobre esto. ' +
+      (example ? 'Titulo ejemplo: "' + example + '". ' : '') +
+      (snippet ? 'Contexto: "' + snippet + '". ' : '') +
+      'En español, responde en este formato exacto:\n' +
+      'PROBLEMA REAL: (1 linea describiendo el dolor especifico que tienen)\n' +
+      'QUIEN LO SUFRE: (tipo de persona o empresa afectada)\n' +
+      'OPORTUNIDADES:\n- (idea 1)\n- (idea 2)\n' +
+      'PREGUNTA: (una pregunta para la comunidad)';
 
     const r = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -88,13 +88,13 @@ async function analyzePatterns() {
   patternCount = {};
   topStories = {};
 
-  for (const kw of KEYWORDS) {
+  for (const kw of SEARCH_QUERIES) {
     const hn = await searchHackerNews(kw);
     const devto = await searchDevTo(kw);
     const total = hn.count + devto.count;
-    if (total >= 5) {
+    if (total >= 3) {
       patternCount[kw] = total;
-      topStories[kw] = hn.example || devto.example;
+      topStories[kw] = { title: hn.example || devto.example, snippet: hn.snippet };
     }
   }
 
@@ -107,7 +107,6 @@ async function analyzePatterns() {
   console.log(report);
   return report;
 }
-
 agent.addCommand('/start', async ({ roomId }) => {
   await agent.sendConnectionMessage(roomId, 
     'Soy IdeaScout. Detecto oportunidades reales de mercado analizando Hacker News.\n\n' +
@@ -130,20 +129,14 @@ agent.addCommand('/nicho', async ({ roomId }) => {
   await agent.sendConnectionMessage(roomId, 'Generando analisis inteligente...');
 
   for (const [kw, count] of top) {
-    const example = topStories[kw] || '';
-    const gemini = await analyzeWithGemini(kw, count, example);
+    const story = topStories[kw] || {};
+    const gemini = await analyzeWithGemini(kw, count, story.title, story.snippet);
 
-    let msg = '🔍 Nicho: ' + kw + '\n';
+    let msg = '🔍 Tendencia: ' + kw + '\n';
     msg += '📊 Discusiones: ' + count + '\n';
-    if (example) msg += '💬 Ejemplo: "' + example + '"\n';
+    if (story.title) msg += '💬 Ejemplo: "' + story.title + '"\n';
     msg += '\n';
-
-    if (gemini) {
-      msg += gemini;
-    } else {
-      msg += 'Alta demanda detectada en comunidades tecnicas. Oportunidad sin solucion dominante.';
-    }
-
+    msg += gemini || 'Alta demanda detectada. Oportunidad sin solución dominante.';
     msg += '\n\n---';
     await agent.sendConnectionMessage(roomId, msg);
   }
