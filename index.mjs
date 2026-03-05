@@ -45,25 +45,41 @@ async function analyzePatterns() {
   console.log(lastReport);
   return lastReport;
 }
-
-agent.addCommand('/start', async ({ replyMessage }) => {
-  await replyMessage('Soy IdeaScout. Detecto oportunidades en Hacker News.\n/reporte - ver analisis\n/nicho - explorar nichos');
+async function sendReply(roomId, text) {
+  try {
+    await axios.post('https://api.superdapp.ai/api/messages', {
+      roomId: roomId,
+      body: JSON.stringify({ m: { body: text, t: 'chat' } })
+    }, {
+      headers: {
+        'Authorization': 'Bearer ' + API_TOKEN,
+        'Content-Type': 'application/json'
+      }
+    });
+  } catch(e) {
+    console.error('Error enviando mensaje:', e.message);
+  }
+}
+agent.addCommand('/start', async (message) => {
+  const roomId = message.roomId;
+  await sendReply(roomId, 'Soy IdeaScout. Detecto oportunidades en Hacker News.\n/reporte - ver analisis\n/nicho - explorar nichos');
 });
 
-agent.addCommand('/reporte', async ({ replyMessage }) => {
-  await replyMessage('Analizando...');
+agent.addCommand('/reporte', async (message) => {
+  const roomId = message.roomId;
+  await sendReply(roomId, 'Analizando...');
   const report = await analyzePatterns();
-  await replyMessage(report);
+  await sendReply(roomId, report);
 });
 
-agent.addCommand('/nicho', async ({ replyMessage }) => {
+agent.addCommand('/nicho', async (message) => {
+  const roomId = message.roomId;
   if (Object.keys(patternCount).length === 0) await analyzePatterns();
   const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
-  if (top.length === 0) return replyMessage('No hay patrones aun.');
+  if (top.length === 0) return await sendReply(roomId, 'No hay patrones aun.');
   const text = top.map(([kw,c], i) => (i+1) + '. ' + kw + ' (' + c + ' menciones)').join('\n');
-  await replyMessage('Nichos detectados:\n\n' + text);
+  await sendReply(roomId, 'Nichos detectados:\n\n' + text);
 });
-
 app.post('/webhook', async (req, res) => {
   try {
     let body = req.body;
