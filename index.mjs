@@ -226,6 +226,30 @@ agent.addCommand('/profundizar', async ({ roomId, message }) => {
   }
 });
 
+app.post('/webhook', async (req, res) => {
+  try {
+    let body = req.body;
+    if (body && body.challenge) return res.status(200).send(body.challenge);
+
+    if (body && body.body && typeof body.body === 'string') {
+      try {
+        const parsed = JSON.parse(body.body);
+        if (parsed.m && typeof parsed.m === 'string') {
+          const inner = JSON.parse(decodeURIComponent(parsed.m));
+          body = { ...body, body: { m: inner } };
+        }
+      } catch(e) {}
+    }
+
+    console.log('Mensaje:', body?.body?.m?.body);
+    await agent.webhookAgent.processRequest(body);
+    res.status(200).send('OK');
+  } catch (e) {
+    console.error('Error webhook:', e.message);
+    res.status(200).send('OK');
+  }
+});
+
 app.get('/', (req, res) => res.json({ status: 'IdeaScout corriendo', patterns: patternCount }));
 app.get('/health', (req, res) => res.json({ status: 'healthy' }));
 
