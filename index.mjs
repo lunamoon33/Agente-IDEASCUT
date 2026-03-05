@@ -171,6 +171,44 @@ const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet, co
   }
 });
 
+agent.addCommand('/profundizar', async ({ roomId }) => {
+  const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1])[0];
+  if (!top) return await agent.sendConnectionMessage(roomId, 'Usa /nicho primero.');
+  
+  const [kw] = top;
+  const story = topStories[kw] || {};
+  const comments = story.storyId ? await getPostComments(story.storyId) : '';
+
+  await agent.sendConnectionMessage(roomId, 'Analizando en profundidad...');
+
+  const prompt = 'Eres un analista de mercado. El tema es "' + kw + '". ' +
+    (story.title ? 'Post real: "' + story.title + '". ' : '') +
+    (comments ? 'Comentarios: "' + comments + '". ' : '') +
+    'En español, sin markdown, responde:\n' +
+    'CONTEXTO: (explica el sector en 2 lineas para alguien que no lo conoce)\n' +
+    'TERMINOS CLAVE: (3 terminos tecnicos del sector explicados simple)\n' +
+    'POR QUE NADIE LO HA RESUELTO: (1 linea)\n' +
+    'MODELO DE NEGOCIO: (como ganarías dinero con esto)\n' +
+    'PRIMER PASO CONCRETO: (que haría alguien hoy para validar esto)';
+
+  const r = await axios.post(
+    'https://api.groq.com/openai/v1/chat/completions',
+    {
+      model: 'llama-3.1-8b-instant',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 400
+    },
+    {
+      headers: {
+        'Authorization': 'Bearer ' + GROQ_API_KEY,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  const analisis = r.data.choices[0].message.content;
+  await agent.sendConnectionMessage(roomId, '🔬 Análisis profundo: ' + kw + '\n\n' + analisis);
+});
 app.post('/webhook', async (req, res) => {
   try {
     let body = req.body;
