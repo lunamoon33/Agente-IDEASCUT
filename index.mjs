@@ -23,6 +23,9 @@ const SEARCH_QUERIES = [
   'nobody has solved'
 ];
 
+let patternCount = {};
+let topStories = {};
+
 async function searchHackerNews(query) {
   try {
     const r = await axios.get(
@@ -37,10 +40,11 @@ async function searchHackerNews(query) {
     return { count: 0, example: '', snippet: '' };
   }
 }
-async function searchDevTo(keyword) {
+
+async function searchDevTo(query) {
   try {
     const r = await axios.get(
-      'https://dev.to/api/articles?tag=' + encodeURIComponent(keyword) + '&per_page=30&top=1'
+      'https://dev.to/api/articles?tag=' + encodeURIComponent(query) + '&per_page=30&top=1'
     );
     const hits = r.data;
     const example = hits[0]?.title || '';
@@ -49,15 +53,16 @@ async function searchDevTo(keyword) {
     return { count: 0, example: '' };
   }
 }
-async function analyzeWithGemini(keyword, mentions, example, snippet) {
+
+async function analyzeWithGroq(keyword, mentions, example, snippet) {
   if (!GROQ_API_KEY) return null;
   try {
-    const prompt = 'Eres un analista de oportunidades de mercado. Personas en comunidades técnicas están buscando: "' + keyword + '". ' +
+    const prompt = 'Eres un analista de oportunidades de mercado. Personas en comunidades tecnicas buscan: "' + keyword + '". ' +
       'Hay ' + mentions + ' discusiones sobre esto. ' +
       (example ? 'Titulo ejemplo: "' + example + '". ' : '') +
       (snippet ? 'Contexto: "' + snippet + '". ' : '') +
       'En español, responde en este formato exacto:\n' +
-      'PROBLEMA REAL: (1 linea describiendo el dolor especifico que tienen)\n' +
+      'PROBLEMA REAL: (1 linea describiendo el dolor especifico)\n' +
       'QUIEN LO SUFRE: (tipo de persona o empresa afectada)\n' +
       'OPORTUNIDADES:\n- (idea 1)\n- (idea 2)\n' +
       'PREGUNTA: (una pregunta para la comunidad)';
@@ -107,16 +112,17 @@ async function analyzePatterns() {
   console.log(report);
   return report;
 }
+
 agent.addCommand('/start', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId, 
-    'Soy IdeaScout. Detecto oportunidades reales de mercado analizando Hacker News.\n\n' +
-    '/reporte - ver nichos detectados\n' +
+  await agent.sendConnectionMessage(roomId,
+    'Soy IdeaScout. Detecto oportunidades reales de mercado analizando comunidades tecnicas.\n\n' +
+    '/reporte - ver tendencias detectadas\n' +
     '/nicho - analisis inteligente de oportunidades'
   );
 });
 
 agent.addCommand('/reporte', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId, 'Analizando patrones en Hacker News...');
+  await agent.sendConnectionMessage(roomId, 'Analizando comunidades tecnicas...');
   const report = await analyzePatterns();
   await agent.sendConnectionMessage(roomId, report);
 });
@@ -130,13 +136,13 @@ agent.addCommand('/nicho', async ({ roomId }) => {
 
   for (const [kw, count] of top) {
     const story = topStories[kw] || {};
-    const gemini = await analyzeWithGemini(kw, count, story.title, story.snippet);
+    const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet);
 
     let msg = '🔍 Tendencia: ' + kw + '\n';
     msg += '📊 Discusiones: ' + count + '\n';
     if (story.title) msg += '💬 Ejemplo: "' + story.title + '"\n';
     msg += '\n';
-    msg += gemini || 'Alta demanda detectada. Oportunidad sin solución dominante.';
+    msg += analisis || 'Alta demanda detectada. Oportunidad sin solucion dominante.';
     msg += '\n\n---';
     await agent.sendConnectionMessage(roomId, msg);
   }
