@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 
 const API_TOKEN = process.env.API_TOKEN || '';
-const agent = new SuperDappAgent({ token: API_TOKEN });
+const agent = new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' });
 
 const KEYWORDS = [
   'document verification', 'fake document', 'fraud', 'audit', 'compliance',
