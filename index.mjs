@@ -13,14 +13,14 @@ const GROQ_API_KEY = process.env.Groq_IA || '';
 const agent = new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' });
 
 const SEARCH_QUERIES = [
-  'ask hn who wants',
-  'ask hn is there a tool',
-  'ask hn why is there no',
-  'ask hn looking for',
-  'frustrated no solution',
-  'why doesnt exist',
-  'built this because',
-  'nobody has solved'
+  'accountants frustrated software',
+  'lawyers need tool automate',
+  'doctors tired paperwork',
+  'small business owner problem',
+  'freelancer invoice pain',
+  'startup compliance nightmare',
+  'ecommerce fraud detection gap',
+  'hr manager automate hiring'
 ];
 
 let patternCount = {};
