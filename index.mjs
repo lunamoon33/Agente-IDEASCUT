@@ -13,11 +13,18 @@ const GROQ_API_KEY = process.env.Groq_IA || '';
 const agent = new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' });
 
 const KEYWORDS = [
-  'document verification', 'fake document', 'fraud', 'audit', 'compliance',
-  'certificate', 'authentication', 'digital trust', 'document fraud',
-  'credential', 'verification failed'
+  // Problemas de negocio
+  'we built', 'we launched', 'show hn', 'ask hn',
+  // Frustraciones técnicas  
+  'frustrated with', 'tired of', 'why is there no',
+  'nobody solves', 'still no good solution',
+  // Sectores emergentes
+  'ai agent', 'automation', 'no code', 'web3',
+  'remote work', 'creator economy', 'fintech',
+  // Problemas clásicos sin resolver
+  'document verification', 'fraud', 'compliance',
+  'identity', 'privacy', 'data breach'
 ];
-
 let patternCount = {};
 let topStories = {};
 
