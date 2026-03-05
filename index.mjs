@@ -79,11 +79,12 @@ async function analyzeWithGroq(keyword, mentions, example, snippet, comments) {
       'Hay ' + mentions + ' discusiones. ' +
       (example ? 'Post ejemplo: "' + example + '". ' : '') +
       (comments ? 'Comentarios reales de la comunidad: "' + comments + '". ' : '') +
-      'En español, sin markdown, sin inventar nada:\n' +
-'LO QUE DIJERON: (resume en 2 lineas SOLO lo que dijeron los comentarios reales, sus palabras)\n' +
-'QUEJA PRINCIPAL: (la frase mas repetida o el dolor mas mencionado)\n' +
-'ALGUIEN PROPUSO: (si alguien en los comentarios sugirió una solución, ponla textual)\n' +
-'PREGUNTA: (1 pregunta corta basada en lo que dijeron)';
+      'En español, sin markdown, sin listas con asteriscos, sin inventar nada.\n' +
+'Usa EXACTAMENTE este formato:\n\n' +
+'💬 Lo que dice la gente: [2 lineas resumiendo sus palabras reales]\n' +
+'😤 El dolor: [1 frase, la queja mas repetida]\n' +
+'💡 Alguien propuso: [si existe, la solucion que alguien mencionó. Si no existe, omite esta linea]\n' +
+'❓ [1 pregunta corta para la comunidad]';
 
     const r = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
