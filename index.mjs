@@ -33,7 +33,18 @@ async function searchHackerNews(keyword) {
     return { count: 0, example: '' };
   }
 }
-
+async function searchDevTo(keyword) {
+  try {
+    const r = await axios.get(
+      'https://dev.to/api/articles?tag=' + encodeURIComponent(keyword) + '&per_page=30&top=1'
+    );
+    const hits = r.data;
+    const example = hits[0]?.title || '';
+    return { count: hits.length, example };
+  } catch(e) {
+    return { count: 0, example: '' };
+  }
+}
 async function analyzeWithGemini(keyword, mentions, example) {
   if (!GROQ_API_KEY) return null;
   try {
@@ -69,16 +80,22 @@ async function analyzePatterns() {
   console.log('Analizando patrones...');
   patternCount = {};
   topStories = {};
+
   for (const kw of KEYWORDS) {
-    const { count, example } = await searchHackerNews(kw);
-    if (count >= 5) {
-      patternCount[kw] = count;
-      topStories[kw] = example;
+    const hn = await searchHackerNews(kw);
+    const devto = await searchDevTo(kw);
+    const total = hn.count + devto.count;
+    if (total >= 5) {
+      patternCount[kw] = total;
+      topStories[kw] = hn.example || devto.example;
     }
   }
+
   const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
   let report = 'IdeaScout Report ' + new Date().toLocaleString() + '\n\n';
-  sorted.forEach(([kw,c],i) => { report += (i+1) + '. "' + kw + '" -> ' + c + ' discusiones\n'; });
+  sorted.forEach(([kw,c],i) => {
+    report += (i+1) + '. "' + kw + '" -> ' + c + ' discusiones\n';
+  });
   report += '\nUsa /nicho para analisis inteligente de cada oportunidad.';
   console.log(report);
   return report;
