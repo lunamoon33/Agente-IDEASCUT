@@ -1,6 +1,6 @@
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { WebhookAgent } = require('@superdapp/agents');
+const { SuperDappAgent } = require('@superdapp/agents');
 import express from 'express';
 import axios from 'axios';
 import cron from 'node-cron';
@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 
 const API_TOKEN = process.env.API_TOKEN || '';
-const agent = new WebhookAgent({ token: API_TOKEN });
+const agent = new SuperDappAgent({ token: API_TOKEN });
 
 const KEYWORDS = [
   'document verification', 'fake document', 'fraud', 'audit', 'compliance',
@@ -45,69 +45,42 @@ async function analyzePatterns() {
   console.log(lastReport);
   return lastReport;
 }
-async function sendReply(roomId, text) {
-  try {
-    await axios.post('https://api.superdapp.ai/api/messages', {
-      roomId: roomId,
-      body: JSON.stringify({ m: { body: text, t: 'chat' } })
-    }, {
-      headers: {
-        'Authorization': 'Bearer ' + API_TOKEN,
-        'Content-Type': 'application/json'
-      }
-    });
-  } catch(e) {
-    console.error('Error enviando mensaje:', e.message);
-  }
-}
-agent.addCommand('/start', async (message) => {
-  const roomId = message.roomId;
-  await sendReply(roomId, 'Soy IdeaScout. Detecto oportunidades en Hacker News.\n/reporte - ver analisis\n/nicho - explorar nichos');
+
+agent.addCommand('/start', async ({ roomId }) => {
+  await agent.sendConnectionMessage(roomId, 'Soy IdeaScout. Detecto oportunidades en Hacker News.\n/reporte - ver analisis\n/nicho - explorar nichos');
 });
 
-agent.addCommand('/reporte', async (message) => {
-  const roomId = message.roomId;
-  await sendReply(roomId, 'Analizando...');
+agent.addCommand('/reporte', async ({ roomId }) => {
+  await agent.sendConnectionMessage(roomId, 'Analizando...');
   const report = await analyzePatterns();
-  await sendReply(roomId, report);
+  await agent.sendConnectionMessage(roomId, report);
 });
 
-agent.addCommand('/nicho', async (message) => {
-  const roomId = message.roomId;
+agent.addCommand('/nicho', async ({ roomId }) => {
   if (Object.keys(patternCount).length === 0) await analyzePatterns();
   const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
-  if (top.length === 0) return await sendReply(roomId, 'No hay patrones aun.');
+  if (top.length === 0) return await agent.sendConnectionMessage(roomId, 'No hay patrones aun.');
   const text = top.map(([kw,c], i) => (i+1) + '. ' + kw + ' (' + c + ' menciones)').join('\n');
-  await sendReply(roomId, 'Nichos detectados:\n\n' + text);
+  await agent.sendConnectionMessage(roomId, 'Nichos detectados:\n\n' + text);
 });
+
 app.post('/webhook', async (req, res) => {
   try {
     let body = req.body;
-    console.log('Recibido raw:', JSON.stringify(body).slice(0, 300));
-
     if (body && body.challenge) return res.status(200).send(body.challenge);
 
-    // Decodificar el campo body que viene URL-encoded
     if (body && body.body && typeof body.body === 'string') {
       try {
         const parsed = JSON.parse(body.body);
         if (parsed.m && typeof parsed.m === 'string') {
           const inner = JSON.parse(decodeURIComponent(parsed.m));
-          // Reconstruir body en el formato que espera el SDK
-          body = {
-            ...body,
-            body: {
-              m: inner
-            }
-          };
+          body = { ...body, body: { m: inner } };
         }
-      } catch(e) {
-        console.log('No se pudo decodificar body:', e.message);
-      }
+      } catch(e) {}
     }
 
-    console.log('Body procesado:', JSON.stringify(body?.body));
-    await agent.processRequest(body);
+    console.log('Mensaje:', body?.body?.m?.body);
+    await agent.webhookAgent.processRequest(body);
     res.status(200).send('OK');
   } catch (e) {
     console.error('Error webhook:', e.message);
