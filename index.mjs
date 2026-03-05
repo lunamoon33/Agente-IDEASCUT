@@ -79,11 +79,11 @@ async function analyzeWithGroq(keyword, mentions, example, snippet, comments) {
       'Hay ' + mentions + ' discusiones. ' +
       (example ? 'Post ejemplo: "' + example + '". ' : '') +
       (comments ? 'Comentarios reales de la comunidad: "' + comments + '". ' : '') +
-      'En español, responde MUY CORTO, sin bold, sin markdown:\n' +
-'PROBLEMA: (1 linea, el dolor exacto)\n' +
-'PARA QUIEN: (1 linea)\n' +
-'IDEAS: (2 ideas, max 10 palabras cada una)\n' +
-'PREGUNTA: (1 pregunta corta para la comunidad)';
+      'En español, sin markdown, sin inventar nada:\n' +
+'LO QUE DIJERON: (resume en 2 lineas SOLO lo que dijeron los comentarios reales, sus palabras)\n' +
+'QUEJA PRINCIPAL: (la frase mas repetida o el dolor mas mencionado)\n' +
+'ALGUIEN PROPUSO: (si alguien en los comentarios sugirió una solución, ponla textual)\n' +
+'PREGUNTA: (1 pregunta corta basada en lo que dijeron)';
 
     const r = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -196,12 +196,12 @@ agent.addCommand('/profundizar', async ({ roomId, message }) => {
   const prompt = 'Eres un analista de mercado. El tema es "' + kw + '". ' +
     (story.title ? 'Post real: "' + story.title + '". ' : '') +
     (comments ? 'Comentarios: "' + comments + '". ' : '') +
-    'En español, sin markdown, responde:\n' +
-    'CONTEXTO: (explica el sector en 2 lineas para alguien que no lo conoce)\n' +
-    'TERMINOS CLAVE: (3 terminos tecnicos explicados simple)\n' +
-    'POR QUE NADIE LO HA RESUELTO: (1 linea)\n' +
-    'MODELO DE NEGOCIO: (como ganarías dinero con esto)\n' +
-    'PRIMER PASO CONCRETO: (que haría alguien hoy para validar esto)';
+    'En español, sin markdown, basandote SOLO en los comentarios reales:\n' +
+'RESUMEN DE QUEJAS: (lo que mas se repite en los comentarios)\n' +
+'SOLUCION MAS VOTADA: (si alguien propuso algo y otros estuvieron de acuerdo)\n' +
+'PERFIL DE QUIEN LO SUFRE: (segun los comentarios, quien es esta persona)\n' +
+'OPORTUNIDAD CONCRETA: (basada en lo que pidieron, no en suposiciones)\n' +
+'PREGUNTA PARA LA COMUNIDAD: (algo que invite a responder)';
 
   try {
     const r = await axios.post(
