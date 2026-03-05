@@ -33,11 +33,13 @@ async function searchHackerNews(query) {
       '&tags=story&hitsPerPage=30'
     );
     const hits = r.data.hits;
-    const example = hits[0]?.title || '';
-    const snippet = hits[0]?.story_text?.slice(0, 200) || '';
-    return { count: hits.length, example, snippet };
+    const top = hits[0];
+    const example = top?.title || '';
+    const snippet = top?.story_text?.slice(0, 200) || '';
+    const storyId = top?.objectID || '';
+    return { count: hits.length, example, snippet, storyId };
   } catch(e) {
-    return { count: 0, example: '', snippet: '' };
+    return { count: 0, example: '', snippet: '', storyId: '' };
   }
 }
 
@@ -54,25 +56,41 @@ async function searchDevTo(query) {
   }
 }
 
-async function analyzeWithGroq(keyword, mentions, example, snippet) {
+async function getPostComments(storyId) {
+  try {
+    const r = await axios.get(
+      'https://hn.algolia.com/api/v1/items/' + storyId
+    );
+    const comments = r.data.children || [];
+    return comments
+      .slice(0, 5)
+      .map(c => c.text?.replace(/<[^>]*>/g, '').slice(0, 150) || '')
+      .filter(c => c.length > 20)
+      .join(' | ');
+  } catch(e) {
+    return '';
+  }
+}
+
+async function analyzeWithGroq(keyword, mentions, example, snippet, comments) {
   if (!GROQ_API_KEY) return null;
   try {
     const prompt = 'Eres un analista de oportunidades de mercado. Personas en comunidades tecnicas buscan: "' + keyword + '". ' +
-      'Hay ' + mentions + ' discusiones sobre esto. ' +
-      (example ? 'Titulo ejemplo: "' + example + '". ' : '') +
-      (snippet ? 'Contexto: "' + snippet + '". ' : '') +
-      'En español, responde en este formato exacto:\n' +
-      'PROBLEMA REAL: (1 linea describiendo el dolor especifico)\n' +
-      'QUIEN LO SUFRE: (tipo de persona o empresa afectada)\n' +
-      'OPORTUNIDADES:\n- (idea 1)\n- (idea 2)\n' +
-      'PREGUNTA: (una pregunta para la comunidad)';
+      'Hay ' + mentions + ' discusiones. ' +
+      (example ? 'Post ejemplo: "' + example + '". ' : '') +
+      (comments ? 'Comentarios reales de la comunidad: "' + comments + '". ' : '') +
+      'En español, responde en este formato:\n' +
+      'PROBLEMA REAL: (el dolor especifico que describen los comentarios)\n' +
+      'QUIEN LO SUFRE: (perfil exacto de persona afectada)\n' +
+      'OPORTUNIDADES:\n- (idea 1 basada en lo que piden)\n- (idea 2)\n' +
+      'PREGUNTA: (pregunta para la comunidad)';
 
     const r = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
         model: 'llama-3.1-8b-instant',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 300
+        max_tokens: 350
       },
       {
         headers: {
@@ -99,7 +117,11 @@ async function analyzePatterns() {
     const total = hn.count + devto.count;
     if (total >= 3) {
       patternCount[kw] = total;
-      topStories[kw] = { title: hn.example || devto.example, snippet: hn.snippet };
+      topStories[kw] = { 
+  title: hn.example || devto.example, 
+  snippet: hn.snippet,
+  storyId: hn.storyId
+};
     }
   }
 
@@ -136,7 +158,8 @@ agent.addCommand('/nicho', async ({ roomId }) => {
 
   for (const [kw, count] of top) {
     const story = topStories[kw] || {};
-    const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet);
+   const comments = story.storyId ? await getPostComments(story.storyId) : '';
+const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet, comments);
 
     let msg = '🔍 Tendencia: ' + kw + '\n';
     msg += '📊 Discusiones: ' + count + '\n';
