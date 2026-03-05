@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 
 const API_TOKEN = process.env.API_TOKEN || '';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GROQ_API_KEY = process.env.Groq_IA || '';
 const agent = new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' });
 
 const KEYWORDS = [
@@ -35,7 +35,7 @@ async function searchHackerNews(keyword) {
 }
 
 async function analyzeWithGemini(keyword, mentions, example) {
-  if (!GEMINI_API_KEY) return null;
+  if (!GROQ_API_KEY) return null;
   try {
     const prompt = 'Eres un analista de mercado. El tema "' + keyword + '" tiene ' + mentions + ' discusiones en Hacker News. ' +
       (example ? 'Ejemplo de discusion: "' + example + '". ' : '') +
@@ -45,12 +45,22 @@ async function analyzeWithGemini(keyword, mentions, example) {
       'PREGUNTA: (una pregunta corta para la comunidad)';
 
     const r = await axios.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY,
-      { contents: [{ parts: [{ text: prompt }] }] }
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'llama-3.1-8b-instant',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 300
+      },
+      {
+        headers: {
+          'Authorization': 'Bearer ' + GROQ_API_KEY,
+          'Content-Type': 'application/json'
+        }
+      }
     );
-    return r.data.candidates[0].content.parts[0].text;
+    return r.data.choices[0].message.content;
   } catch(e) {
-    console.error('Gemini error:', e.response?.data || e.message);
+    console.error('Groq error:', e.response?.data || e.message);
     return null;
   }
 }
