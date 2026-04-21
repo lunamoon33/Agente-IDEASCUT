@@ -316,7 +316,6 @@ agent.addCommand('/profundizar', async ({ roomId, message }) => {
 });
 
 app.post('/webhook', async (req, res) => {
-  console.log('BODY RAW:', JSON.stringify(req.body).slice(0, 300));
   try {
     let body = req.body;
     if (body && body.challenge) return res.status(200).send(body.challenge);
@@ -332,19 +331,14 @@ app.post('/webhook', async (req, res) => {
     }
 
     const msgText = body?.body?.m?.body || '';
-    const isChannel = body?.isChannel || false;
-    const channelId = body?.channelId || body?.roomId;
-    const senderId = body?.senderId || body?.userId;
+    const roomId = body?.roomId || '';
+    const isGroupMessage = roomId === GROUP_ID;
 
-    console.log('msg:', msgText, '| isChannel:', isChannel, '| channelId:', channelId, '| senderId:', senderId);
+    console.log('msg:', msgText, '| isGroup:', isGroupMessage, '| roomId:', roomId);
 
-    if (isChannel) {
+    if (isGroupMessage) {
       if (msgText.startsWith('/')) {
-        await axios.post(
-          'https://api.superdapp.ai/v1/agent-bots/channels/' + channelId + '/messages',
-          { message: { body: msgText + ' recibido!' } },
-          { headers: { 'Authorization': 'Bearer ' + API_TOKEN, 'Content-Type': 'application/json' } }
-        );
+        await agent.sendChannelMessage(GROUP_ID, msgText + ' — recibido en el grupo!');
       }
     } else {
       await agent.webhookAgent.processRequest(body);
