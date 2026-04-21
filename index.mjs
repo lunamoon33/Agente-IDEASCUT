@@ -350,12 +350,3 @@ app.listen(PORT, async () => {
   await joinGroup(GROUP_ID);
   analyzePatterns();
 });
-      console.log('Joined! URL:', url, r.data);
-      return;
-    } catch(e) {
-      console.log('Failed:', url, e.response?.status, e.response?.data?.errors?.message || e.message);
-    }
-  }
-}
-  analyzePatterns();
-});
