@@ -10,6 +10,7 @@ app.use(express.json());
 
 const API_TOKEN = process.env.API_TOKEN || '';
 const GROQ_API_KEY = process.env.Groq_IA || '';
+const GROUP_ID = 'ddcfc5f0-9436-4549-aa9b-937f1845d223';
 const agent = new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' });
 
 const SEARCH_QUERIES = [
@@ -58,9 +59,7 @@ async function searchDevTo(query) {
 
 async function getPostComments(storyId) {
   try {
-    const r = await axios.get(
-      'https://hn.algolia.com/api/v1/items/' + storyId
-    );
+    const r = await axios.get('https://hn.algolia.com/api/v1/items/' + storyId);
     const comments = r.data.children || [];
     return comments
       .slice(0, 5)
@@ -80,11 +79,11 @@ async function analyzeWithGroq(keyword, mentions, example, snippet, comments) {
       (example ? 'Post ejemplo: "' + example + '". ' : '') +
       (comments ? 'Comentarios reales de la comunidad: "' + comments + '". ' : '') +
       'En español, sin markdown, sin listas con asteriscos, sin inventar nada.\n' +
-'Usa EXACTAMENTE este formato:\n\n' +
-'💬 Lo que dice la gente: [2 lineas resumiendo sus palabras reales]\n' +
-'😤 El dolor: [1 frase, la queja mas repetida]\n' +
-'💡 Alguien propuso: [si existe, la solucion que alguien mencionó. Si no existe, omite esta linea]\n' +
-'❓ [1 pregunta corta para la comunidad]';
+      'Usa EXACTAMENTE este formato:\n\n' +
+      '💬 Lo que dice la gente: [2 lineas resumiendo sus palabras reales]\n' +
+      '😤 El dolor: [1 frase, la queja mas repetida]\n' +
+      '💡 Alguien propuso: [si existe, la solucion que alguien mencionó. Si no existe, omite esta linea]\n' +
+      '❓ [1 pregunta corta para la comunidad]';
 
     const r = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -118,11 +117,11 @@ async function analyzePatterns() {
     const total = hn.count + devto.count;
     if (total >= 3) {
       patternCount[kw] = total;
-      topStories[kw] = { 
-  title: hn.example || devto.example, 
-  snippet: hn.snippet,
-  storyId: hn.storyId
-};
+      topStories[kw] = {
+        title: hn.example || devto.example,
+        snippet: hn.snippet,
+        storyId: hn.storyId
+      };
     }
   }
 
@@ -136,34 +135,71 @@ async function analyzePatterns() {
   return report;
 }
 
-agent.addCommand('/hola', async ({ roomId }) => {
+async function joinGroup(groupId) {
+  try {
+    const r = await axios.post(
+      'https://api.superdapp.ai/v1/agent-bots/groups/' + groupId + '/join',
+      {},
+      { headers: { 'Authorization': 'Bearer ' + API_TOKEN } }
+    );
+    console.log('Joined group:', r.data);
+  } catch(e) {
+    console.error('Join group error:', e.response?.data || e.message);
+  }
+}
+
+agent.addCommand('/start', async ({ roomId }) => {
   await agent.sendConnectionMessage(roomId,
-    '👋 Hola! 'Soy IdeaScout. Detecto oportunidades reales de mercado analizando comunidades tecnicas.\n\n' +
-'/reporte - ver tendencias detectadas\n' +
-'/nicho - analisis inteligente de oportunidades\n' +
-'/industria [sector] - nichos de tu industria especifica\n' +
-'/profundizar - analisis profundo de un nicho\n' +
-'/hola - ver esta presentacion'
+    'Soy IdeaScout. Detecto oportunidades reales de mercado analizando comunidades tecnicas.\n\n' +
+    '/reporte - ver tendencias detectadas\n' +
+    '/nicho - analisis inteligente de oportunidades\n' +
+    '/industria [sector] - nichos de tu industria especifica\n' +
+    '/profundizar - analisis profundo de un nicho\n' +
+    '/hola - ver esta presentacion'
   );
 });
+
+agent.addCommand('/hola', async ({ roomId }) => {
+  await agent.sendConnectionMessage(roomId,
+    'Hola! Soy IdeaScout.\n\n' +
+    'Detecto oportunidades reales de mercado analizando lo que la gente dice en comunidades tecnicas.\n\n' +
+    'Comandos disponibles:\n' +
+    '/reporte - ver tendencias detectadas ahora mismo\n' +
+    '/nicho - analisis inteligente con comentarios reales\n' +
+    '/industria [sector] - nichos personalizados de tu industria\n' +
+    '/profundizar - elegir un nicho para analisis profundo\n'
+  );
+});
+
+agent.addCommand('/help', async ({ roomId }) => {
+  await agent.sendConnectionMessage(roomId,
+    'Comandos disponibles:\n\n' +
+    '/reporte - tendencias detectadas\n' +
+    '/nicho - analisis con comentarios reales\n' +
+    '/industria [sector] - nichos de tu industria\n' +
+    '/profundizar - analisis profundo de un nicho\n' +
+    '/hola - presentacion del agente'
+  );
+});
+
 agent.addCommand('/industria', async ({ roomId, message }) => {
   const texto = message?.body?.m?.body || '';
   const industria = texto.replace('/industria', '').trim();
 
   if (!industria) {
     return await agent.sendConnectionMessage(roomId,
-      '¿En qué industria trabajas?\n\n' +
+      'En que industria trabajas?\n\n' +
       'Ejemplos:\n' +
       '/industria contabilidad\n' +
       '/industria legal\n' +
       '/industria salud\n' +
       '/industria ecommerce\n' +
       '/industria tech\n\n' +
-      'Te mandaré nichos específicos de tu sector.'
+      'Te mandare nichos especificos de tu sector.'
     );
   }
 
-  await agent.sendConnectionMessage(roomId, '🔍 Buscando problemas reales en ' + industria + '...');
+  await agent.sendConnectionMessage(roomId, 'Buscando problemas reales en ' + industria + '...');
 
   const hn = await searchHackerNews(industria + ' problem frustrated');
   const devto = await searchDevTo(industria);
@@ -171,29 +207,24 @@ agent.addCommand('/industria', async ({ roomId, message }) => {
   const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
   const total = hn.count + devto.count;
 
-  const analisis = await analyzeWithGroq(
-    industria, total, example, hn.snippet, comments
-  );
+  const analisis = await analyzeWithGroq(industria, total, example, hn.snippet, comments);
 
-  let msg = '🎯 Nichos detectados en: ' + industria + '\n';
-  msg += '📊 ' + total + ' discusiones encontradas\n';
-  if (example) msg += '💬 Ejemplo: "' + example + '"\n';
+  let msg = 'Nichos detectados en: ' + industria + '\n';
+  msg += 'Discusiones encontradas: ' + total + '\n';
+  if (example) msg += 'Ejemplo: "' + example + '"\n';
   msg += '\n';
-  msg += analisis || 'Industria con actividad detectada. Usa /profundizar para análisis completo.';
+  msg += analisis || 'Industria con actividad detectada. Usa /profundizar para analisis completo.';
 
   await agent.sendConnectionMessage(roomId, msg);
 });
-agent.addCommand('/help', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId,
-    '📖 Comandos disponibles:\n\n' +
-    '/reporte — tendencias detectadas\n' +
-    '/nicho — análisis con comentarios reales\n' +
-    '/profundizar — elegir un nicho para análisis profundo\n' +
-    '/hola — presentación del agente'
-  );
-});
 
 agent.addCommand('/reporte', async ({ roomId }) => {
+  await agent.sendConnectionMessage(roomId, 'Analizando comunidades tecnicas...');
+  const report = await analyzePatterns();
+  await agent.sendConnectionMessage(roomId, report);
+});
+
+agent.addCommand('/report', async ({ roomId }) => {
   await agent.sendConnectionMessage(roomId, 'Analizando comunidades tecnicas...');
   const report = await analyzePatterns();
   await agent.sendConnectionMessage(roomId, report);
@@ -208,12 +239,12 @@ agent.addCommand('/nicho', async ({ roomId }) => {
 
   for (const [kw, count] of top) {
     const story = topStories[kw] || {};
-   const comments = story.storyId ? await getPostComments(story.storyId) : '';
-const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet, comments);
+    const comments = story.storyId ? await getPostComments(story.storyId) : '';
+    const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet, comments);
 
-    let msg = '🔍 Tendencia: ' + kw + '\n';
-    msg += '📊 Discusiones: ' + count + '\n';
-    if (story.title) msg += '💬 Ejemplo: "' + story.title + '"\n';
+    let msg = 'Tendencia: ' + kw + '\n';
+    msg += 'Discusiones: ' + count + '\n';
+    if (story.title) msg += 'Ejemplo: "' + story.title + '"\n';
     msg += '\n';
     msg += analisis || 'Alta demanda detectada. Oportunidad sin solucion dominante.';
     msg += '\n\n---';
@@ -229,7 +260,7 @@ agent.addCommand('/profundizar', async ({ roomId, message }) => {
   const numero = parseInt(texto.replace('/profundizar', '').trim()) - 1;
 
   if (isNaN(numero) || numero < 0 || numero >= top.length) {
-    let lista = 'Elige qué nicho profundizar:\n\n';
+    let lista = 'Elige que nicho profundizar:\n\n';
     top.forEach(([kw, c], i) => {
       lista += (i+1) + '. ' + kw + ' (' + c + ' discusiones)\n';
     });
@@ -247,11 +278,11 @@ agent.addCommand('/profundizar', async ({ roomId, message }) => {
     (story.title ? 'Post real: "' + story.title + '". ' : '') +
     (comments ? 'Comentarios: "' + comments + '". ' : '') +
     'En español, sin markdown, basandote SOLO en los comentarios reales:\n' +
-'RESUMEN DE QUEJAS: (lo que mas se repite en los comentarios)\n' +
-'SOLUCION MAS VOTADA: (si alguien propuso algo y otros estuvieron de acuerdo)\n' +
-'PERFIL DE QUIEN LO SUFRE: (segun los comentarios, quien es esta persona)\n' +
-'OPORTUNIDAD CONCRETA: (basada en lo que pidieron, no en suposiciones)\n' +
-'PREGUNTA PARA LA COMUNIDAD: (algo que invite a responder)';
+    'RESUMEN DE QUEJAS: (lo que mas se repite en los comentarios)\n' +
+    'SOLUCION MAS VOTADA: (si alguien propuso algo y otros estuvieron de acuerdo)\n' +
+    'PERFIL DE QUIEN LO SUFRE: (segun los comentarios, quien es esta persona)\n' +
+    'OPORTUNIDAD CONCRETA: (basada en lo que pidieron, no en suposiciones)\n' +
+    'PREGUNTA PARA LA COMUNIDAD: (algo que invite a responder)';
 
   try {
     const r = await axios.post(
@@ -269,7 +300,7 @@ agent.addCommand('/profundizar', async ({ roomId, message }) => {
       }
     );
     const analisis = r.data.choices[0].message.content;
-    await agent.sendConnectionMessage(roomId, '🔬 ' + kw + '\n\n' + analisis);
+    await agent.sendConnectionMessage(roomId, kw + '\n\n' + analisis);
   } catch(e) {
     console.error('Groq error:', e.response?.data || e.message);
     await agent.sendConnectionMessage(roomId, 'Error al analizar. Intenta de nuevo.');
@@ -292,8 +323,6 @@ app.post('/webhook', async (req, res) => {
     }
 
     console.log('Mensaje:', body?.body?.m?.body);
-console.log('RoomId raw:', body?.roomId || body?.room_id || body?.chatId);
-console.log('Body completo:', JSON.stringify(body).slice(0, 300));
     await agent.webhookAgent.processRequest(body);
     res.status(200).send('OK');
   } catch (e) {
@@ -308,7 +337,8 @@ app.get('/health', (req, res) => res.json({ status: 'healthy' }));
 cron.schedule('0 */6 * * *', analyzePatterns);
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log('IdeaScout en puerto ' + PORT);
+  await joinGroup(GROUP_ID);
   analyzePatterns();
 });
