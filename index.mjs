@@ -269,7 +269,7 @@ await agent.processRequest(bodyStr);
     res.status(200).send('OK');
   } catch (e) {
     console.error('Error webhook:', e.response?.data || e.message);
-    res.status(200).send('OK');
+  res.status(200).json({ success: true });
   }
 });
 
