@@ -168,14 +168,75 @@ agent.addCommand('/start', async ({ roomId }) => {
 });
 
 agent.addCommand('/hola', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId,
-    'Hola! Soy IdeaScout.\n\n' +
-    'Detecto oportunidades reales de mercado analizando lo que la gente dice en comunidades tecnicas.\n\n' +
-    'Comandos disponibles:\n' +
-    '/reporte - ver tendencias detectadas ahora mismo\n' +
-    '/nicho - analisis inteligente con comentarios reales\n' +
-    '/industria [sector] - nichos personalizados de tu industria\n' +
-    '/profundizar - elegir un nicho para analisis profundo\n'
+if (isGroupMessage) {
+  if (!msgText.startsWith('/')) return res.status(200).send('OK');
+
+  if (msgText === '/hola' || msgText === '/start') {
+    await agent.sendChannelMessage(GROUP_ID,
+      'Hola! Soy IdeaScout.\n\n' +
+      'Detecto oportunidades reales de mercado analizando comunidades tecnicas.\n\n' +
+      '/reporte - ver tendencias detectadas\n' +
+      '/nicho - analisis inteligente\n' +
+      '/industria [sector] - nichos de tu industria\n' +
+      '/profundizar - analisis profundo'
+    );
+  } else if (msgText === '/reporte' || msgText === '/report') {
+    await agent.sendChannelMessage(GROUP_ID, 'Analizando comunidades tecnicas...');
+    const report = await analyzePatterns();
+    await agent.sendChannelMessage(GROUP_ID, report);
+  } else if (msgText === '/nicho') {
+    if (Object.keys(patternCount).length === 0) await analyzePatterns();
+    const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,3);
+    for (const [kw, count] of top) {
+      const story = topStories[kw] || {};
+      const comments = story.storyId ? await getPostComments(story.storyId) : '';
+      const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet, comments);
+      let msg = 'Tendencia: ' + kw + '\n';
+      msg += 'Discusiones: ' + count + '\n';
+      if (story.title) msg += 'Ejemplo: "' + story.title + '"\n\n';
+      msg += analisis || 'Alta demanda detectada.';
+      await agent.sendChannelMessage(GROUP_ID, msg);
+    }
+  } else if (msgText.startsWith('/industria')) {
+    const industria = msgText.replace('/industria', '').trim();
+    if (!industria) {
+      await agent.sendChannelMessage(GROUP_ID, 'Escribe: /industria [sector]\nEjemplo: /industria contabilidad');
+    } else {
+      await agent.sendChannelMessage(GROUP_ID, 'Buscando problemas en ' + industria + '...');
+      const hn = await searchHackerNews(industria + ' problem frustrated');
+      const devto = await searchDevTo(industria);
+      const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
+      const total = hn.count + devto.count;
+      const analisis = await analyzeWithGroq(industria, total, hn.example, hn.snippet, comments);
+      let msg = 'Nichos en: ' + industria + ' (' + total + ' discusiones)\n\n';
+      msg += analisis || 'Actividad detectada en este sector.';
+      await agent.sendChannelMessage(GROUP_ID, msg);
+    }
+  } else if (msgText.startsWith('/profundizar')) {
+    const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
+    if (!top.length) {
+      await agent.sendChannelMessage(GROUP_ID, 'Usa /nicho primero.');
+      return res.status(200).send('OK');
+    }
+    const numero = parseInt(msgText.replace('/profundizar', '').trim()) - 1;
+    if (isNaN(numero) || numero < 0) {
+      let lista = 'Elige que nicho profundizar:\n\n';
+      top.forEach(([kw, c], i) => { lista += (i+1) + '. ' + kw + '\n'; });
+      lista += '\nEscribe: /profundizar 1';
+      await agent.sendChannelMessage(GROUP_ID, lista);
+    } else {
+      const [kw] = top[numero];
+      const story = topStories[kw] || {};
+      const comments = story.storyId ? await getPostComments(story.storyId) : '';
+      await agent.sendChannelMessage(GROUP_ID, 'Analizando: ' + kw + '...');
+      const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
+        { model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: 'Analiza en español sin markdown: "' + kw + '". Post: "' + (story.title||'') + '". Comentarios: "' + comments + '". Formato: RESUMEN QUEJAS / SOLUCION VOTADA / PERFIL / OPORTUNIDAD / PREGUNTA' }], max_tokens: 400 },
+        { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
+      );
+      await agent.sendChannelMessage(GROUP_ID, r.data.choices[0].message.content);
+    }
+  }
+}
   );
 });
 
