@@ -136,11 +136,24 @@ async function analyzePatterns() {
   return report;
 }
 
-agent.addCommand('/start', async ({ roomId }) => {
+agent.addCommand('/hola', async ({ roomId }) => {
   await agent.sendConnectionMessage(roomId,
-    'Soy IdeaScout. Detecto oportunidades reales de mercado analizando comunidades tecnicas.\n\n' +
-    '/reporte - ver tendencias detectadas\n' +
-    '/nicho - analisis inteligente de oportunidades'
+    '👋 Hola! Soy IdeaScout.\n\n' +
+    'Detecto oportunidades reales de mercado analizando lo que la gente dice en comunidades técnicas.\n\n' +
+    '¿Qué puedo hacer por ti?\n\n' +
+    '/reporte — ver tendencias detectadas ahora mismo\n' +
+    '/nicho — análisis inteligente con comentarios reales\n' +
+    '/profundizar — profundizar en un nicho específico\n' +
+    '/start — volver a ver esto'
+  );
+});
+agent.addCommand('/help', async ({ roomId }) => {
+  await agent.sendConnectionMessage(roomId,
+    '📖 Comandos disponibles:\n\n' +
+    '/reporte — tendencias detectadas\n' +
+    '/nicho — análisis con comentarios reales\n' +
+    '/profundizar — elegir un nicho para análisis profundo\n' +
+    '/hola — presentación del agente'
   );
 });
 
