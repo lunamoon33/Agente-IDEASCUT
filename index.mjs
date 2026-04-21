@@ -330,29 +330,23 @@ app.post('/webhook', async (req, res) => {
       } catch(e) {}
     }
 
-    console.log('Mensaje:', body?.body?.m?.body);
-    const roomId = body?.roomId || body?.channelId;
-const isChannel = body?.isChannel || false;
-console.log('RoomId:', roomId, 'isChannel:', isChannel);
-    await console.log('Body completo:', JSON.stringify(body).slice(0, 400));
-const isChannel = body?.isChannel || body?.channelId;
-if (isChannel) {
-  const channelId = body?.channelId || body?.roomId;
-  const msgText = body?.body?.m?.body || '';
-  console.log('Mensaje de canal:', channelId, msgText);
-  if (msgText.startsWith('/')) {
-    await agent.sendChannelMessage(channelId, 'Hola desde el canal! Usa /hola para empezar.');
-  }
-} else {
-  await agent.webhookAgent.processRequest(body);
-}
+    const msgText = body?.body?.m?.body || '';
+    const isChannel = body?.isChannel || false;
+    const channelId = body?.channelId || body?.roomId;
+    console.log('Mensaje:', msgText, '| isChannel:', isChannel, '| channelId:', channelId);
+
+    if (isChannel && msgText.startsWith('/')) {
+      await agent.sendChannelMessage(channelId, 'Hola desde el canal! Usa /hola para empezar.');
+    } else {
+      await agent.webhookAgent.processRequest(body);
+    }
+
     res.status(200).send('OK');
   } catch (e) {
     console.error('Error webhook:', e.message);
     res.status(200).send('OK');
   }
 });
-
 app.get('/', (req, res) => res.json({ status: 'IdeaScout corriendo', patterns: patternCount }));
 app.get('/health', (req, res) => res.json({ status: 'healthy' }));
 
