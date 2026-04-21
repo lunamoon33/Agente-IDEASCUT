@@ -136,15 +136,23 @@ async function analyzePatterns() {
 }
 
 async function joinGroup(groupId) {
-  try {
-    const r = await axios.post(
-      'https://api.superdapp.ai/v1/agent-bots/groups/' + groupId + '/join',
-      {},
-      { headers: { 'Authorization': 'Bearer ' + API_TOKEN } }
-    );
-    console.log('Joined group:', r.data);
-  } catch(e) {
-    console.error('Join group error:', e.response?.data || e.message);
+  const endpoints = [
+    `https://api.superdapp.ai/v1/agent-bots/social-groups/${groupId}/join`,
+    `https://api.superdapp.ai/v1/social-groups/${groupId}/join`,
+    `https://api.superdapp.ai/v1/groups/${groupId}/join`,
+    `https://api.superdapp.ai/v1/agent-bots/channels/${groupId}/join`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const r = await axios.post(url, {}, {
+        headers: { 'Authorization': 'Bearer ' + API_TOKEN }
+      });
+      console.log('Joined! URL:', url, r.data);
+      return;
+    } catch(e) {
+      console.log('Failed:', url, e.response?.status, e.response?.data?.errors?.message || e.message);
+    }
   }
 }
 
