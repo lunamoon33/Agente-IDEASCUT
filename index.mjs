@@ -314,7 +314,7 @@ agent.addCommand('/profundizar', async ({ roomId, message }) => {
     await agent.sendConnectionMessage(roomId, 'Error al analizar. Intenta de nuevo.');
   }
 });
-
+console.log('BODY RAW:', JSON.stringify(req.body).slice(0, 500));
 app.post('/webhook', async (req, res) => {
   try {
     let body = req.body;
