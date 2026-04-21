@@ -331,6 +331,9 @@ app.post('/webhook', async (req, res) => {
     }
 
     console.log('Mensaje:', body?.body?.m?.body);
+    const roomId = body?.roomId || body?.channelId;
+const isChannel = body?.isChannel || false;
+console.log('RoomId:', roomId, 'isChannel:', isChannel);
     await agent.webhookAgent.processRequest(body);
     res.status(200).send('OK');
   } catch (e) {
