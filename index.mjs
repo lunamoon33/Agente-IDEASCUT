@@ -243,6 +243,8 @@ app.post('/webhook', async (req, res) => {
     }
 
     console.log('Mensaje:', body?.body?.m?.body);
+console.log('RoomId raw:', body?.roomId || body?.room_id || body?.chatId);
+console.log('Body completo:', JSON.stringify(body).slice(0, 300));
     await agent.webhookAgent.processRequest(body);
     res.status(200).send('OK');
   } catch (e) {
