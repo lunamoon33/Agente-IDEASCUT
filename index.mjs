@@ -262,7 +262,8 @@ app.post('/webhook', async (req, res) => {
         }
       }
     } else {
-      await agent.webhookAgent.processRequest(body);
+      const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+await agent.processRequest(bodyStr);
     }
 
     res.status(200).send('OK');
