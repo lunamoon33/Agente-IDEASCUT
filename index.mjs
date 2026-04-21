@@ -339,11 +339,25 @@ cron.schedule('0 */6 * * *', analyzePatterns);
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, async () => {
   console.log('IdeaScout en puerto ' + PORT);
-  try {
-  await agent.client.joinSocialGroup(GROUP_ID);
-  console.log('Joined group via SDK');
-} catch(e) {
-  console.error('SDK join error:', e.response?.data || e.message);
+async function joinGroup(groupId) {
+  const endpoints = [
+    `https://api.superdapp.ai/v1/agent-bots/social-groups/${groupId}/join`,
+    `https://api.superdapp.ai/v1/social-groups/${groupId}/join`,
+    `https://api.superdapp.ai/v1/groups/${groupId}/join`,
+    `https://api.superdapp.ai/v1/agent-bots/channels/${groupId}/join`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const r = await axios.post(url, {}, {
+        headers: { 'Authorization': 'Bearer ' + API_TOKEN }
+      });
+      console.log('Joined! URL:', url, r.data);
+      return;
+    } catch(e) {
+      console.log('Failed:', url, e.response?.status, e.response?.data?.errors?.message || e.message);
+    }
+  }
 }
   analyzePatterns();
 });
