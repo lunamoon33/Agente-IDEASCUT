@@ -138,14 +138,50 @@ async function analyzePatterns() {
 
 agent.addCommand('/hola', async ({ roomId }) => {
   await agent.sendConnectionMessage(roomId,
-    '👋 Hola! Soy IdeaScout.\n\n' +
-    'Detecto oportunidades reales de mercado analizando lo que la gente dice en comunidades técnicas.\n\n' +
-    '¿Qué puedo hacer por ti?\n\n' +
-    '/reporte — ver tendencias detectadas ahora mismo\n' +
-    '/nicho — análisis inteligente con comentarios reales\n' +
-    '/profundizar — profundizar en un nicho específico\n' +
-    '/start — volver a ver esto'
+    '👋 Hola! 'Soy IdeaScout. Detecto oportunidades reales de mercado analizando comunidades tecnicas.\n\n' +
+'/reporte - ver tendencias detectadas\n' +
+'/nicho - analisis inteligente de oportunidades\n' +
+'/industria [sector] - nichos de tu industria especifica\n' +
+'/profundizar - analisis profundo de un nicho\n' +
+'/hola - ver esta presentacion'
   );
+});
+agent.addCommand('/industria', async ({ roomId, message }) => {
+  const texto = message?.body?.m?.body || '';
+  const industria = texto.replace('/industria', '').trim();
+
+  if (!industria) {
+    return await agent.sendConnectionMessage(roomId,
+      '¿En qué industria trabajas?\n\n' +
+      'Ejemplos:\n' +
+      '/industria contabilidad\n' +
+      '/industria legal\n' +
+      '/industria salud\n' +
+      '/industria ecommerce\n' +
+      '/industria tech\n\n' +
+      'Te mandaré nichos específicos de tu sector.'
+    );
+  }
+
+  await agent.sendConnectionMessage(roomId, '🔍 Buscando problemas reales en ' + industria + '...');
+
+  const hn = await searchHackerNews(industria + ' problem frustrated');
+  const devto = await searchDevTo(industria);
+  const example = hn.example || devto.example || '';
+  const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
+  const total = hn.count + devto.count;
+
+  const analisis = await analyzeWithGroq(
+    industria, total, example, hn.snippet, comments
+  );
+
+  let msg = '🎯 Nichos detectados en: ' + industria + '\n';
+  msg += '📊 ' + total + ' discusiones encontradas\n';
+  if (example) msg += '💬 Ejemplo: "' + example + '"\n';
+  msg += '\n';
+  msg += analisis || 'Industria con actividad detectada. Usa /profundizar para análisis completo.';
+
+  await agent.sendConnectionMessage(roomId, msg);
 });
 agent.addCommand('/help', async ({ roomId }) => {
   await agent.sendConnectionMessage(roomId,
