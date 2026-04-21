@@ -337,21 +337,12 @@ app.get('/health', (req, res) => res.json({ status: 'healthy' }));
 cron.schedule('0 */6 * * *', analyzePatterns);
 
 const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, async () => {
   console.log('IdeaScout en puerto ' + PORT);
-async function joinGroup(groupId) {
-  const endpoints = [
-    `https://api.superdapp.ai/v1/agent-bots/social-groups/${groupId}/join`,
-    `https://api.superdapp.ai/v1/social-groups/${groupId}/join`,
-    `https://api.superdapp.ai/v1/groups/${groupId}/join`,
-    `https://api.superdapp.ai/v1/agent-bots/channels/${groupId}/join`,
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const r = await axios.post(url, {}, {
-        headers: { 'Authorization': 'Bearer ' + API_TOKEN }
-      });
+  await joinGroup(GROUP_ID);
+  analyzePatterns();
+});
       console.log('Joined! URL:', url, r.data);
       return;
     } catch(e) {
