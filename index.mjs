@@ -339,6 +339,11 @@ cron.schedule('0 */6 * * *', analyzePatterns);
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, async () => {
   console.log('IdeaScout en puerto ' + PORT);
-  await joinGroup(GROUP_ID);
+  try {
+  await agent.client.joinSocialGroup(GROUP_ID);
+  console.log('Joined group via SDK');
+} catch(e) {
+  console.error('SDK join error:', e.response?.data || e.message);
+}
   analyzePatterns();
 });
