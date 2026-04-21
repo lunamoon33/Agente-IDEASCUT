@@ -345,7 +345,6 @@ app.get('/health', (req, res) => res.json({ status: 'healthy' }));
 cron.schedule('0 */6 * * *', analyzePatterns);
 
 const PORT = process.env.PORT || 8080;
-const PORT = process.env.PORT || 8080;
 app.listen(PORT, async () => {
   console.log('IdeaScout en puerto ' + PORT);
   await joinGroup(GROUP_ID);
