@@ -1,37 +1,72 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+require('dotenv').config();
 const { SuperDappAgent } = require('@superdapp/agents');
-import express from 'express';
-import axios from 'axios';
-import cron from 'node-cron';
+const express = require('express');
+const axios   = require('axios');
 
 const app = express();
 app.use(express.json());
 
-const API_TOKEN = process.env.API_TOKEN || '';
-const GROQ_API_KEY = process.env.Groq_IA || '';
-const GROUP_ID = 'ddcfc5f0-9436-4549-aa9b-937f1845d223';
-const agent = new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' });
+const API_TOKEN    = process.env.API_TOKEN    || '';
+const GROQ_API_KEY = process.env.Groq_IA      || '';
+const GROUP_ID     = process.env.GROUP_ID     || 'ddcfc5f0-9436-4549-aa9b-937f1845d223';
+
+const agent = API_TOKEN
+  ? new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' })
+  : null;
+
+if (agent) {
+  Object.getPrototypeOf(agent).getRoomId = function(message) {
+    const rm = message.rawMessage;
+    if (rm?.senderId && rm?.memberId) return `${rm.memberId}-${rm.senderId}`;
+    if (rm?.roomId)    return rm.roomId;
+    if (rm?.channelId) return rm.channelId;
+    if (rm?.memberId)  return rm.memberId;
+    return '';
+  };
+  const proto = Object.getPrototypeOf(agent);
+  proto.sendChannelMessage = async function(channelId, message, options) {
+    const msgBody = { body: JSON.stringify({ m: encodeURIComponent(JSON.stringify({ body: message })), t: 'channel' }) };
+    return this.client.sendChannelMessage(channelId, { message: msgBody, isSilent: options?.isSilent || false });
+  };
+}
+
+// ── Sesiones ──────────────────────────────────────────────────────────────────
+const userSessions = new Map();
+function getSession(roomId) {
+  if (!userSessions.has(roomId)) {
+    userSessions.set(roomId, { lang: 'es', industry: null, waitingFor: null });
+  }
+  return userSessions.get(roomId);
+}
+
+// ── Registro silencioso de interés ────────────────────────────────────────────
+const nicheInterest = new Map();
+function registerInterest(roomId, niche) {
+  const key = niche.toLowerCase().trim();
+  if (!nicheInterest.has(key)) nicheInterest.set(key, new Set());
+  nicheInterest.get(key).add(roomId);
+}
+function getInterestCount(niche) {
+  const key = niche.toLowerCase().trim();
+  return nicheInterest.has(key) ? nicheInterest.get(key).size : 0;
+}
+
+// ── Datos ─────────────────────────────────────────────────────────────────────
+let patternCount = {};
+let topStories   = {};
 
 const SEARCH_QUERIES = [
-  'accountants frustrated software',
-  'lawyers need tool automate',
-  'doctors tired paperwork',
-  'small business owner problem',
-  'freelancer invoice pain',
-  'startup compliance nightmare',
-  'ecommerce fraud detection gap',
-  'hr manager automate hiring'
+  'accountants frustrated software', 'lawyers need tool automate',
+  'doctors tired paperwork', 'small business owner problem',
+  'freelancer invoice pain', 'startup compliance nightmare',
+  'ecommerce fraud detection gap', 'hr manager automate hiring',
+  'teachers overwhelmed admin', 'engineers manual process pain'
 ];
-
-let patternCount = {};
-let topStories = {};
 
 async function searchHackerNews(query) {
   try {
     const r = await axios.get('https://hn.algolia.com/api/v1/search?query=' + encodeURIComponent(query) + '&tags=story&hitsPerPage=30');
-    const hits = r.data.hits;
-    const top = hits[0];
+    const hits = r.data.hits; const top = hits[0];
     return { count: hits.length, example: top?.title || '', snippet: top?.story_text?.slice(0, 200) || '', storyId: top?.objectID || '' };
   } catch(e) { return { count: 0, example: '', snippet: '', storyId: '' }; }
 }
@@ -50,237 +85,327 @@ async function getPostComments(storyId) {
   } catch(e) { return ''; }
 }
 
-async function analyzeWithGroq(keyword, mentions, example, snippet, comments) {
+async function analyzeWithGroq(keyword, mentions, example, snippet, comments, lang) {
   if (!GROQ_API_KEY) return null;
+  const isEs = lang !== 'en';
   try {
-    const prompt = 'Eres un analista de oportunidades de mercado. Personas en comunidades tecnicas buscan: "' + keyword + '". Hay ' + mentions + ' discusiones. ' +
-      (example ? 'Post ejemplo: "' + example + '". ' : '') +
-      (comments ? 'Comentarios reales: "' + comments + '". ' : '') +
-      'En español, sin markdown, sin inventar nada.\nUsa EXACTAMENTE este formato:\n\n' +
-      '💬 Lo que dice la gente: [2 lineas resumiendo sus palabras reales]\n' +
-      '😤 El dolor: [1 frase, la queja mas repetida]\n' +
-      '💡 Alguien propuso: [si existe, omite si no]\n' +
-      '❓ [1 pregunta corta para la comunidad]';
+    const prompt = isEs
+      ? 'Analista de oportunidades. Personas buscan solución a: "' + keyword + '". ' + mentions + ' discusiones. ' +
+        (example ? 'Post: "' + example + '". ' : '') + (comments ? 'Comentarios: "' + comments + '". ' : '') +
+        'Responde en español sin markdown:\n💬 Lo que dice la gente: [2 líneas]\n😤 El dolor principal: [1 frase]\n💡 Oportunidad: [1 frase]\n❓ [1 pregunta de validación]'
+      : 'Market analyst. People seek solution to: "' + keyword + '". ' + mentions + ' discussions. ' +
+        (example ? 'Post: "' + example + '". ' : '') + (comments ? 'Comments: "' + comments + '". ' : '') +
+        'Answer in English without markdown:\n💬 What people say: [2 lines]\n😤 Main pain: [1 sentence]\n💡 Opportunity: [1 sentence]\n❓ [1 validation question]';
     const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
       { model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: prompt }], max_tokens: 350 },
       { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
     );
     return r.data.choices[0].message.content;
-  } catch(e) { console.error('Groq error:', e.response?.data || e.message); return null; }
+  } catch(e) { return null; }
+}
+
+async function validateIdea(idea, lang, industry) {
+  if (!GROQ_API_KEY) return null;
+  const isEs = lang !== 'en';
+  const hn    = await searchHackerNews(idea + ' problem pain');
+  const devto = await searchDevTo(idea);
+  const total = hn.count + devto.count;
+  const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
+  try {
+    const prompt = isEs
+      ? 'Valida si existe demanda para: "' + idea + '"' + (industry ? ' (industria: ' + industry + ')' : '') +
+        '. Encontré ' + total + ' discusiones.' + (hn.example ? ' Ejemplo: "' + hn.example + '".' : '') +
+        (comments ? ' Comentarios: "' + comments + '".' : '') +
+        '\nSin markdown:\n✅ o ❌ Veredicto: [existe o no el problema]\n📊 Evidencia: [qué encontré]\n🎯 Oportunidad: [cómo monetizar si existe]\n⚠️ Riesgo: [qué podría fallar]'
+      : 'Validate demand for: "' + idea + '"' + (industry ? ' (industry: ' + industry + ')' : '') +
+        '. Found ' + total + ' discussions.' + (hn.example ? ' Example: "' + hn.example + '".' : '') +
+        '\nNo markdown:\n✅ or ❌ Verdict: [problem exists or not]\n📊 Evidence: [what I found]\n🎯 Opportunity: [how to monetize]\n⚠️ Risk: [what could fail]';
+    const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
+      { model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: prompt }], max_tokens: 500 },
+      { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
+    );
+    return { analysis: r.data.choices[0].message.content, count: total, niche: idea };
+  } catch(e) { return null; }
 }
 
 async function analyzePatterns() {
-  console.log('Analizando patrones...');
-  patternCount = {};
-  topStories = {};
+  patternCount = {}; topStories = {};
   for (const kw of SEARCH_QUERIES) {
-    const hn = await searchHackerNews(kw);
-    const devto = await searchDevTo(kw);
+    const hn = await searchHackerNews(kw); const devto = await searchDevTo(kw);
     const total = hn.count + devto.count;
-    if (total >= 3) {
-      patternCount[kw] = total;
-      topStories[kw] = { title: hn.example || devto.example, snippet: hn.snippet, storyId: hn.storyId };
-    }
-  }
-  const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
-  let report = 'IdeaScout Report ' + new Date().toLocaleString() + '\n\n';
-  sorted.forEach(([kw,c],i) => { report += (i+1) + '. "' + kw + '" -> ' + c + ' discusiones\n'; });
-  report += '\nUsa /nicho para analisis inteligente de cada oportunidad.';
-  console.log(report);
-  return report;
-}
-
-async function joinGroup(groupId) {
-  const endpoints = [
-    'https://api.superdapp.ai/v1/agent-bots/social-groups/' + groupId + '/join',
-    'https://api.superdapp.ai/v1/social-groups/' + groupId + '/join',
-    'https://api.superdapp.ai/v1/groups/' + groupId + '/join',
-    'https://api.superdapp.ai/v1/agent-bots/channels/' + groupId + '/join',
-  ];
-  for (const url of endpoints) {
-    try {
-      const r = await axios.post(url, {}, { headers: { 'Authorization': 'Bearer ' + API_TOKEN } });
-      console.log('Joined! URL:', url);
-      return;
-    } catch(e) { console.log('Failed:', url, e.response?.status); }
+    if (total >= 3) { patternCount[kw] = total; topStories[kw] = { title: hn.example || devto.example, snippet: hn.snippet, storyId: hn.storyId }; }
   }
 }
 
-// Comandos privados
-agent.addCommand('/start', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId, 'Soy IdeaScout. Detecto oportunidades reales de mercado.\n\n/reporte - tendencias\n/nicho - analisis inteligente\n/industria [sector] - nichos de tu industria\n/profundizar - analisis profundo\n/hola - presentacion');
-});
-
-agent.addCommand('/hola', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId, 'Hola! Soy IdeaScout.\n\nDetecto oportunidades reales de mercado analizando comunidades tecnicas.\n\n/reporte - ver tendencias\n/nicho - analisis con comentarios reales\n/industria [sector] - nichos de tu industria\n/profundizar - analisis profundo');
-});
-
-agent.addCommand('/help', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId, '/reporte - tendencias\n/nicho - analisis\n/industria [sector] - nichos\n/profundizar - profundo\n/hola - presentacion');
-});
-
-agent.addCommand('/reporte', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId, 'Analizando...');
-  const report = await analyzePatterns();
-  await agent.sendConnectionMessage(roomId, report);
-});
-
-agent.addCommand('/report', async ({ roomId }) => {
-  await agent.sendConnectionMessage(roomId, 'Analizando...');
-  const report = await analyzePatterns();
-  await agent.sendConnectionMessage(roomId, report);
-});
-
-agent.addCommand('/nicho', async ({ roomId }) => {
-  if (Object.keys(patternCount).length === 0) await analyzePatterns();
-  const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,3);
-  if (top.length === 0) return await agent.sendConnectionMessage(roomId, 'No hay patrones. Usa /reporte primero.');
-  await agent.sendConnectionMessage(roomId, 'Generando analisis...');
-  for (const [kw, count] of top) {
-    const story = topStories[kw] || {};
-    const comments = story.storyId ? await getPostComments(story.storyId) : '';
-    const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet, comments);
-    let msg = 'Tendencia: ' + kw + '\nDiscusiones: ' + count + '\n';
-    if (story.title) msg += 'Ejemplo: "' + story.title + '"\n';
-    msg += '\n' + (analisis || 'Alta demanda detectada.') + '\n\n---';
-    await agent.sendConnectionMessage(roomId, msg);
+// ── Textos i18n ───────────────────────────────────────────────────────────────
+const T = {
+  es: {
+    welcome:     '👋 Soy **IdeaScout**\n\nTe ayudo a:\n✅ **Validar** si tu idea tiene mercado real\n🔭 **Explorar** qué problemas reales hay en tu industria\n\n¿Qué hacemos?',
+    askIndustry: '¿A qué industria perteneces o en qué área trabajas?\n\nEj: contabilidad, salud, educación, tecnología...\n_(No necesitas tener profesión específica)_',
+    askIdea:     '¿Cuál es tu idea o el problema que quieres resolver?\n\nEscríbela brevemente. Ej: _"app para contadores sin errores en facturas"_',
+    validating:  '🔍 Buscando evidencia real en internet...',
+    exploring:   '🔍 Buscando problemas reales en tu industria...',
+    noData:      '⚠️ Pocas discusiones encontradas. Puede ser un mercado muy nuevo o muy específico.',
+    interested:  '👥 **{n} personas** en IdeaScout también exploran este nicho.',
+    onlyYou:     '👥 **Eres el primero** en explorar este nicho aquí.',
+    connectPaid: '💎 ¿Ver quiénes son? → próximamente con $SUPR',
+    menuLabel:   '¿Qué hacemos?',
+    help:        '**IdeaScout — Ayuda**\n\n✅ **Validar** — dime tu idea, te digo si hay mercado\n🔭 **Explorar** — dime tu industria, busco problemas reales\n📊 **Tendencias** — top oportunidades de la semana\n\nTambién puedes escribir directamente:\n_"valida mi idea de..."_ o _"qué problemas hay en salud"_',
+  },
+  en: {
+    welcome:     '👋 I\'m **IdeaScout**\n\nI help you:\n✅ **Validate** if your idea has real market demand\n🔭 **Explore** what real problems exist in your industry\n\nWhat do we do?',
+    askIndustry: 'What industry do you belong to or work in?\n\nEx: accounting, health, education, tech...\n_(No specific profession needed)_',
+    askIdea:     'What\'s your idea or the problem you want to solve?\n\nDescribe it briefly. Ex: _"app for accountants to manage invoices without errors"_',
+    validating:  '🔍 Searching for real evidence on the internet...',
+    exploring:   '🔍 Searching for real problems in your industry...',
+    noData:      '⚠️ Few discussions found. This might be a very new or niche market.',
+    interested:  '👥 **{n} people** on IdeaScout are also exploring this niche.',
+    onlyYou:     '👥 **You\'re the first** to explore this niche here.',
+    connectPaid: '💎 See who they are? → coming soon with $SUPR',
+    menuLabel:   'What do we do?',
+    help:        '**IdeaScout — Help**\n\n✅ **Validate** — tell me your idea, I\'ll check the market\n🔭 **Explore** — tell me your industry, I\'ll find real problems\n📊 **Trends** — top opportunities this week\n\nYou can also write directly:\n_"validate my idea of..."_ or _"what problems exist in health"_',
   }
-});
+};
 
-agent.addCommand('/industria', async ({ roomId, message }) => {
-  const texto = message?.body?.m?.body || '';
-  const industria = texto.replace('/industria', '').trim();
-  if (!industria) return await agent.sendConnectionMessage(roomId, 'Escribe: /industria [sector]\nEj: /industria contabilidad');
-  await agent.sendConnectionMessage(roomId, 'Buscando en ' + industria + '...');
-  const hn = await searchHackerNews(industria + ' problem frustrated');
-  const devto = await searchDevTo(industria);
-  const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
-  const total = hn.count + devto.count;
-  const analisis = await analyzeWithGroq(industria, total, hn.example || devto.example, hn.snippet, comments);
-  let msg = 'Nichos en: ' + industria + ' (' + total + ' discusiones)\n\n';
-  msg += analisis || 'Actividad detectada.';
+function t(lang, key, vars) {
+  const str = (T[lang] || T['es'])[key] || key;
+  if (!vars) return str;
+  return Object.entries(vars).reduce((s, [k, v]) => s.replace('{' + k + '}', v), str);
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+async function sendMenu(roomId, lang) {
+  const isEs = lang !== 'en';
+  await agent.sendReplyMarkupMessage('buttons', roomId, t(lang, 'menuLabel'), [
+    [
+      { text: '✅ ' + (isEs ? 'Validar mi idea'    : 'Validate my idea'), callback_data: 'ACTION:validate' },
+      { text: '🔭 ' + (isEs ? 'Explorar nichos'    : 'Explore niches'),   callback_data: 'ACTION:explore'  },
+    ],
+    [
+      { text: '📊 ' + (isEs ? 'Tendencias'         : 'Trends'),           callback_data: 'ACTION:trends'   },
+      { text: '🌐 ' + (isEs ? 'English'            : 'Español'),          callback_data: 'ACTION:lang'     },
+    ],
+    [{ text: '❓ ' + (isEs ? 'Ayuda'               : 'Help'),             callback_data: 'ACTION:help'     }],
+  ]);
+}
+
+async function sendInterestFooter(roomId, niche, lang) {
+  registerInterest(roomId, niche);
+  const count = getInterestCount(niche);
+  const msg = (count > 1 ? t(lang, 'interested', { n: count }) : t(lang, 'onlyYou')) + '\n' + t(lang, 'connectPaid');
   await agent.sendConnectionMessage(roomId, msg);
-});
+}
 
-agent.addCommand('/profundizar', async ({ roomId, message }) => {
-  const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
-  if (!top.length) return await agent.sendConnectionMessage(roomId, 'Usa /nicho primero.');
-  const texto = message?.body?.m?.body || '';
-  const numero = parseInt(texto.replace('/profundizar', '').trim()) - 1;
-  if (isNaN(numero) || numero < 0 || numero >= top.length) {
-    let lista = 'Elige nicho:\n\n';
-    top.forEach(([kw, c], i) => { lista += (i+1) + '. ' + kw + ' (' + c + ')\n'; });
-    lista += '\nEscribe: /profundizar 1';
-    return await agent.sendConnectionMessage(roomId, lista);
+// ── Flujos principales ────────────────────────────────────────────────────────
+async function runExplore(roomId, industry, lang) {
+  const session = getSession(roomId);
+  session.industry = industry;
+  await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
+  const hn    = await searchHackerNews(industry + ' problem frustrated pain');
+  const devto = await searchDevTo(industry);
+  const total = hn.count + devto.count;
+  if (total < 3) {
+    await agent.sendConnectionMessage(roomId, t(lang, 'noData'));
+    await sendMenu(roomId, lang);
+    return;
   }
-  const [kw] = top[numero];
-  const story = topStories[kw] || {};
-  const comments = story.storyId ? await getPostComments(story.storyId) : '';
-  await agent.sendConnectionMessage(roomId, 'Analizando: ' + kw + '...');
-  try {
-    const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
-      { model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: 'Analiza en español sin markdown: "' + kw + '". Post: "' + (story.title||'') + '". Comentarios: "' + comments + '". Formato: RESUMEN QUEJAS / SOLUCION VOTADA / PERFIL / OPORTUNIDAD / PREGUNTA' }], max_tokens: 400 },
-      { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
-    );
-    await agent.sendConnectionMessage(roomId, kw + '\n\n' + r.data.choices[0].message.content);
-  } catch(e) { await agent.sendConnectionMessage(roomId, 'Error. Intenta de nuevo.'); }
-});
+  const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
+  const analysis = await analyzeWithGroq(industry, total, hn.example || devto.example, hn.snippet, comments, lang);
+  let msg = '🏭 **' + industry + '** — ' + total + (lang === 'en' ? ' discussions\n\n' : ' discusiones\n\n');
+  msg += analysis || '✅ ' + (lang === 'en' ? 'Real activity detected in this niche.' : 'Actividad real detectada en este nicho.');
+  await agent.sendConnectionMessage(roomId, msg);
+  await sendInterestFooter(roomId, industry, lang);
+  await sendMenu(roomId, lang);
+}
 
-// Webhook
-app.post('/webhook', async (req, res) => {
-  try {
-    let body = req.body;
-    if (body && body.challenge) return res.status(200).send(body.challenge);
-    if (body && body.body && typeof body.body === 'string') {
-      try {
-        const parsed = JSON.parse(body.body);
-        if (parsed.m && typeof parsed.m === 'string') {
-          const inner = JSON.parse(decodeURIComponent(parsed.m));
-          body = { ...body, body: { m: inner } };
-        }
-      } catch(e) {}
-    }
-    const msgText = body?.body?.m?.body || '';
-    const roomId = body?.roomId || '';
-    const isGroupMessage = roomId === GROUP_ID;
-    console.log('msg:', msgText, '| isGroup:', isGroupMessage);
+async function runValidate(roomId, idea, lang) {
+  const session = getSession(roomId);
+  await agent.sendConnectionMessage(roomId, t(lang, 'validating'));
+  const result = await validateIdea(idea, lang, session.industry);
+  if (!result) {
+    await agent.sendConnectionMessage(roomId, t(lang, 'noData'));
+    await sendMenu(roomId, lang);
+    return;
+  }
+  await agent.sendConnectionMessage(roomId, result.analysis);
+  await sendInterestFooter(roomId, result.niche, lang);
+  await sendMenu(roomId, lang);
+}
 
-    if (isGroupMessage) {
-      if (!msgText.startsWith('/')) return res.status(200).send('OK');
-      if (msgText === '/hola' || msgText === '/start') {
-        await agent.sendChannelMessage(GROUP_ID, 'Hola! Soy IdeaScout.\n\nDetecto oportunidades reales de mercado.\n\n/reporte - tendencias\n/nicho - analisis inteligente\n/industria [sector] - nichos de tu industria\n/profundizar - analisis profundo');
-      } else if (msgText === '/reporte' || msgText === '/report') {
-        await agent.sendChannelMessage(GROUP_ID, 'Analizando...');
-        const report = await analyzePatterns();
-        await agent.sendChannelMessage(GROUP_ID, report);
-      } else if (msgText === '/nicho') {
-        if (Object.keys(patternCount).length === 0) await analyzePatterns();
-        const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,3);
-        for (const [kw, count] of top) {
-          const story = topStories[kw] || {};
-          const comments = story.storyId ? await getPostComments(story.storyId) : '';
-          const analisis = await analyzeWithGroq(kw, count, story.title, story.snippet, comments);
-          let msg = 'Tendencia: ' + kw + '\nDiscusiones: ' + count + '\n';
-          if (story.title) msg += 'Ejemplo: "' + story.title + '"\n\n';
-          msg += analisis || 'Alta demanda detectada.';
-          await agent.sendChannelMessage(GROUP_ID, msg);
-        }
-      } else if (msgText.startsWith('/industria')) {
-        const industria = msgText.replace('/industria', '').trim();
-        if (!industria) {
-          await agent.sendChannelMessage(GROUP_ID, 'Escribe: /industria [sector]\nEj: /industria contabilidad');
-        } else {
-          await agent.sendChannelMessage(GROUP_ID, 'Buscando en ' + industria + '...');
-          const hn = await searchHackerNews(industria + ' problem frustrated');
-          const devto = await searchDevTo(industria);
-          const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
-          const total = hn.count + devto.count;
-          const analisis = await analyzeWithGroq(industria, total, hn.example, hn.snippet, comments);
-          await agent.sendChannelMessage(GROUP_ID, 'Nichos en: ' + industria + ' (' + total + ' discusiones)\n\n' + (analisis || 'Actividad detectada.'));
-        }
-      } else if (msgText.startsWith('/profundizar')) {
-        const top = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
-        if (!top.length) return await agent.sendChannelMessage(GROUP_ID, 'Usa /nicho primero.');
-        const numero = parseInt(msgText.replace('/profundizar', '').trim()) - 1;
-        if (isNaN(numero) || numero < 0) {
-          let lista = 'Elige nicho:\n\n';
-          top.forEach(([kw, c], i) => { lista += (i+1) + '. ' + kw + '\n'; });
-          lista += '\nEscribe: /profundizar 1';
-          await agent.sendChannelMessage(GROUP_ID, lista);
-        } else {
-          const [kw] = top[numero];
-          const story = topStories[kw] || {};
-          const comments = story.storyId ? await getPostComments(story.storyId) : '';
-          await agent.sendChannelMessage(GROUP_ID, 'Analizando: ' + kw + '...');
-          try {
-            const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
-              { model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: 'Analiza en español sin markdown: "' + kw + '". Post: "' + (story.title||'') + '". Comentarios: "' + comments + '". Formato: RESUMEN QUEJAS / SOLUCION VOTADA / PERFIL / OPORTUNIDAD / PREGUNTA' }], max_tokens: 400 },
-              { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
-            );
-            await agent.sendChannelMessage(GROUP_ID, r.data.choices[0].message.content);
-          } catch(e) { await agent.sendChannelMessage(GROUP_ID, 'Error. Intenta de nuevo.'); }
-        }
+async function runTrends(roomId, lang) {
+  await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
+  if (Object.keys(patternCount).length === 0) await analyzePatterns();
+  const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
+  if (!sorted.length) { await agent.sendConnectionMessage(roomId, t(lang, 'noData')); await sendMenu(roomId, lang); return; }
+  const isEs = lang !== 'en';
+  let msg = isEs ? '📊 **Top oportunidades esta semana:**\n\n' : '📊 **Top opportunities this week:**\n\n';
+  sorted.forEach(([kw, c], i) => { msg += (i+1) + '. ' + kw + ' → ' + c + (isEs ? ' discusiones\n' : ' discussions\n'); });
+  await agent.sendConnectionMessage(roomId, msg);
+  const rows = sorted.map(([kw], i) => [{ text: (i+1) + '. ' + kw, callback_data: 'DEEP:' + i }]);
+  rows.push([{ text: isEs ? '🔙 Volver' : '🔙 Back', callback_data: 'ACTION:menu' }]);
+  await agent.sendReplyMarkupMessage('buttons', roomId, isEs ? '¿Cuál profundizas?' : 'Which one to explore?', rows);
+}
+
+async function detectIntent(text, session, roomId) {
+  const lang  = session.lang;
+  const lower = text.toLowerCase();
+  const isEs  = lang !== 'en';
+
+  if (lower.match(/valid|hay mercado|is there market|mi idea|my idea|idea de .+/i)) {
+    const ideaMatch = text.match(/idea(?:\s+de)?\s+(.+)/i) || text.match(/valid(?:a(?:r)?)?\s+(.+)/i);
+    if (ideaMatch && ideaMatch[1].length > 3) { await runValidate(roomId, ideaMatch[1].trim(), lang); return true; }
+    session.waitingFor = 'idea';
+    await agent.sendConnectionMessage(roomId, t(lang, 'askIdea'));
+    return true;
+  }
+  if (lower.match(/problema|problem|industria|industry|sector|nicho|niche|explora|explore/i)) {
+    const indMatch = text.match(/(?:en|in|industria|industry|sector)\s+(.+)/i);
+    if (indMatch && indMatch[1].length > 2) { await runExplore(roomId, indMatch[1].trim(), lang); return true; }
+    session.waitingFor = 'industry';
+    await agent.sendConnectionMessage(roomId, t(lang, 'askIndustry'));
+    return true;
+  }
+  if (lower.match(/tendencia|trend|oportunidad|opportunity/i)) {
+    await runTrends(roomId, lang);
+    return true;
+  }
+  return false;
+}
+
+// ── Registrar handlers ────────────────────────────────────────────────────────
+let handlersRegistered = false;
+function registerHandlers() {
+  if (!agent || handlersRegistered) return;
+  handlersRegistered = true;
+
+  agent.addCommand('/start', async ({ roomId }) => {
+    const s = getSession(roomId);
+    await agent.sendConnectionMessage(roomId, t(s.lang, 'welcome'));
+    await sendMenu(roomId, s.lang);
+  });
+
+  agent.addCommand('/help', async ({ roomId }) => {
+    const s = getSession(roomId);
+    await agent.sendConnectionMessage(roomId, t(s.lang, 'help'));
+    await sendMenu(roomId, s.lang);
+  });
+
+  agent.addCommand('/menu', async ({ roomId }) => {
+    const s = getSession(roomId);
+    await sendMenu(roomId, s.lang);
+  });
+
+  agent.addCommand('/validar', async ({ roomId, message }) => {
+    const s    = getSession(roomId);
+    const text = (message?.body?.m?.body || '').replace('/validar', '').trim();
+    if (!text) { s.waitingFor = 'idea'; await agent.sendConnectionMessage(roomId, t(s.lang, 'askIdea')); return; }
+    await runValidate(roomId, text, s.lang);
+  });
+
+  agent.addCommand('/explorar', async ({ roomId, message }) => {
+    const s    = getSession(roomId);
+    const text = (message?.body?.m?.body || '').replace('/explorar', '').trim();
+    if (!text) { s.waitingFor = 'industry'; await agent.sendConnectionMessage(roomId, t(s.lang, 'askIndustry')); return; }
+    await runExplore(roomId, text, s.lang);
+  });
+
+  agent.addCommand('callback_query', async ({ message, roomId }) => {
+    const cmd  = message.callback_command || '';
+    const data = message.data             || '';
+    const s    = getSession(roomId);
+    const lang = s.lang;
+
+    if (cmd === 'ACTION') {
+      if (data === 'validate') { s.waitingFor = 'idea'; await agent.sendConnectionMessage(roomId, t(lang, 'askIdea')); return; }
+      if (data === 'explore')  {
+        if (s.industry) { await runExplore(roomId, s.industry, lang); }
+        else { s.waitingFor = 'industry'; await agent.sendConnectionMessage(roomId, t(lang, 'askIndustry')); }
+        return;
       }
-    } else {
-      const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
-await agent.processRequest(bodyStr);
+      if (data === 'trends') { await runTrends(roomId, lang); return; }
+      if (data === 'lang')   { s.lang = lang === 'es' ? 'en' : 'es'; await agent.sendConnectionMessage(roomId, s.lang === 'en' ? '🌐 Switched to English!' : '🌐 ¡Cambiado a Español!'); await sendMenu(roomId, s.lang); return; }
+      if (data === 'help')   { await agent.sendConnectionMessage(roomId, t(lang, 'help')); await sendMenu(roomId, lang); return; }
+      if (data === 'menu')   { await sendMenu(roomId, lang); return; }
     }
 
-    res.status(200).send('OK');
-  } catch (e) {
-    console.error('Error webhook:', e.response?.data || e.message);
-  res.status(200).json({ success: true });
-  }
+    if (cmd === 'DEEP') {
+      const idx    = parseInt(data);
+      const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]);
+      if (idx >= 0 && idx < sorted.length) {
+        const [kw] = sorted[idx];
+        const story    = topStories[kw] || {};
+        const comments = story.storyId ? await getPostComments(story.storyId) : '';
+        await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
+        const analysis = await analyzeWithGroq(kw, patternCount[kw], story.title, story.snippet, comments, lang);
+        const isEs = lang !== 'en';
+        let msg = '🔍 **' + kw + '**\n\n' + (analysis || (isEs ? '✅ Alta demanda detectada.' : '✅ High demand detected.'));
+        await agent.sendConnectionMessage(roomId, msg);
+        await sendInterestFooter(roomId, kw, lang);
+        await sendMenu(roomId, lang);
+      }
+      return;
+    }
+  });
+
+  agent.addCommand('message', async ({ message, roomId }) => {
+    const m    = message.body && message.body.m;
+    const text = (typeof m === 'object' && typeof m.body === 'string' ? m.body : message.data) || '';
+    if (!text || (message.rawMessage && message.rawMessage.isBot)) return;
+    const isChannel = message.rawMessage && message.rawMessage.__typename === 'ChannelMessage';
+    if (isChannel && !text.startsWith('/')) return;
+
+    const s    = getSession(roomId);
+    const lang = s.lang;
+
+    // Respuesta a pregunta pendiente
+    if (s.waitingFor === 'industry') { s.waitingFor = null; await runExplore(roomId, text.trim(), lang); return; }
+    if (s.waitingFor === 'idea')     { s.waitingFor = null; await runValidate(roomId, text.trim(), lang); return; }
+
+    // Detectar intención
+    const handled = await detectIntent(text, s, roomId);
+    if (handled) return;
+
+    // Respuesta abierta con Groq
+    if (GROQ_API_KEY) {
+      try {
+        const isEs = lang !== 'en';
+        const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
+          { model: 'llama-3.1-8b-instant', messages: [
+            { role: 'system', content: isEs
+              ? 'Eres IdeaScout, ayudas a validar ideas de negocio y encontrar oportunidades de mercado. Responde en español, breve y útil.'
+              : 'You are IdeaScout, you help validate business ideas and find market opportunities. Answer in English, brief and helpful.' },
+            { role: 'user', content: text }
+          ], max_tokens: 300 },
+          { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
+        );
+        await agent.sendConnectionMessage(roomId, r.data.choices[0].message.content);
+      } catch(e) {
+        await agent.sendConnectionMessage(roomId, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?');
+      }
+    }
+    await sendMenu(roomId, lang);
+  });
+
+  console.log('[IdeaScout] Handlers registrados ✅');
+}
+
+// ── Webhook ───────────────────────────────────────────────────────────────────
+app.post('/webhook', async (req, res) => {
+  res.status(200).send('OK');
+  if (!agent) return;
+  try {
+    const payload = req.body;
+    if (payload && payload.challenge) return;
+    registerHandlers();
+    await agent.processRequest(payload);
+  } catch(e) { console.error('[IdeaScout] Webhook error:', e.message); }
 });
 
-app.get('/', (req, res) => res.json({ status: 'IdeaScout corriendo', patterns: patternCount }));
+app.get('/',       (req, res) => res.json({ status: 'IdeaScout running', users: userSessions.size, niches: nicheInterest.size }));
 app.get('/health', (req, res) => res.json({ status: 'healthy' }));
-
-cron.schedule('0 */6 * * *', analyzePatterns);
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, async () => {
-  console.log('IdeaScout en puerto ' + PORT);
-  await joinGroup(GROUP_ID);
+  console.log('[IdeaScout] Puerto ' + PORT);
   analyzePatterns();
 });
