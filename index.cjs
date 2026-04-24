@@ -352,7 +352,7 @@ function registerHandlers() {
     const text = (typeof m === 'object' && typeof m.body === 'string' ? m.body : message.data) || '';
     if (!text || (message.rawMessage && message.rawMessage.isBot)) return;
     const isChannel = message.rawMessage && message.rawMessage.__typename === 'ChannelMessage';
-    if (isChannel && !text.startsWith('/')) return;
+    if (isChannel && message.rawMessage?.isBot) return;
 
     const s    = getSession(roomId);
     const lang = s.lang;
