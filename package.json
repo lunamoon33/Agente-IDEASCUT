@@ -1,9 +1,9 @@
 {
   "name": "agente-ideascut",
   "version": "1.0.0",
-  "main": "index.mjs",
+  "main": "index.cjs",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node index.cjs"
   },
   "dependencies": {
     "@superdapp/agents": "1.0.1",
