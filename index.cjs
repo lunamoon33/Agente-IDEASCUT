@@ -174,21 +174,21 @@ function t(lang, key, vars) {
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
-async function sendMenu(roomId, lang) {
+async function sendMenu(roomId, lang, isChannel = false) {
   const isEs = lang !== 'en';
-  await agent.sendReplyMarkupMessage('buttons', roomId, texto, botones, {}, 'channel'); [
+  const buttons = [
     [
-      { text: '✅ ' + (isEs ? 'Validar mi idea'    : 'Validate my idea'), callback_data: 'ACTION:validate' },
-      { text: '🔭 ' + (isEs ? 'Explorar nichos'    : 'Explore niches'),   callback_data: 'ACTION:explore'  },
+      { text: '✅ ' + (isEs ? 'Validar mi idea' : 'Validate my idea'), callback_data: 'ACTION:validate' },
+      { text: '🔭 ' + (isEs ? 'Explorar nichos' : 'Explore niches'),  callback_data: 'ACTION:explore'  },
     ],
     [
-      { text: '📊 ' + (isEs ? 'Tendencias'         : 'Trends'),           callback_data: 'ACTION:trends'   },
-      { text: '🌐 ' + (isEs ? 'English'            : 'Español'),          callback_data: 'ACTION:lang'     },
+      { text: '📊 ' + (isEs ? 'Tendencias'      : 'Trends'),          callback_data: 'ACTION:trends'   },
+      { text: '🌐 ' + (isEs ? 'English'         : 'Español'),         callback_data: 'ACTION:lang'     },
     ],
-    [{ text: '❓ ' + (isEs ? 'Ayuda'               : 'Help'),             callback_data: 'ACTION:help'     }],
-  ]);
+    [{ text: '❓ ' + (isEs ? 'Ayuda'            : 'Help'),            callback_data: 'ACTION:help'     }],
+  ];
+  await agent.sendReplyMarkupMessage('buttons', roomId, t(lang, 'menuLabel'), buttons, {}, isChannel ? 'channel' : 'chat');
 }
-
 async function sendInterestFooter(roomId, niche, lang) {
   registerInterest(roomId, niche);
   const count = getInterestCount(niche);
