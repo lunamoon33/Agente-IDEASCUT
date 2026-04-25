@@ -9,8 +9,6 @@ app.use(express.json());
 const API_TOKEN    = process.env.API_TOKEN    || '';
 const GROQ_API_KEY = process.env.Groq_IA      || '';
 const GROUP_ID     = process.env.GROUP_ID     || 'ddcfc5f0-9436-4549-aa9b-937f1845d223';
-// Cuántas exploraciones gratuitas tiene cada usuario antes del paywall
-const FREE_EXPLORES = 2;
 
 const agent = API_TOKEN
   ? new SuperDappAgent({ apiToken: API_TOKEN, baseUrl: 'https://api.superdapp.ai' })
@@ -25,6 +23,7 @@ if (agent) {
     if (rm?.memberId)  return rm.memberId;
     return '';
   };
+  // ── FIX: fuerza t:'channel' para que los mensajes lleguen en tiempo real ──
   const proto = Object.getPrototypeOf(agent);
   proto.sendChannelMessage = async function(channelId, message, options) {
     const msgBody = { body: JSON.stringify({ m: encodeURIComponent(JSON.stringify({ body: message })), t: 'channel' }) };
@@ -32,42 +31,54 @@ if (agent) {
   };
 }
 
-// ── sendMsg — helper único para DM y canal ────────────────────────────────────
-// Todos los flujos usan este wrapper en vez de llamar directamente al agente.
-async function sendMsg(roomId, text, isChannel = false) {
+// ── FIX: helper que elige canal o DM según contexto ───────────────────────────
+async function sendMsg(roomId, text, isChannel) {
   if (!agent) return;
-  if (isChannel) {
-    return agent.sendChannelMessage(roomId, text);
-  }
-  return agent.sendConnectionMessage(roomId, text);
+  if (isChannel) await agent.sendChannelMessage(roomId, text);
+  else           await agent.sendConnectionMessage(roomId, text);
 }
 
 // ── Sesiones ──────────────────────────────────────────────────────────────────
 const userSessions = new Map();
 function getSession(roomId) {
   if (!userSessions.has(roomId)) {
-    userSessions.set(roomId, {
-      lang:          'es',
-      industry:      null,
-      profession:    null,   // NUEVO: profesión del usuario
-      waitingFor:    null,
-      exploreCount:  0,      // NUEVO: contador de exploraciones gratuitas
-      unlockedExtra: false,  // NUEVO: si ya pagó por más nichos
-    });
+    // NUEVO: profession guarda a qué se dedica el usuario
+    // isNew marca si es primera vez para hacer el onboarding
+    userSessions.set(roomId, { lang: 'es', industry: null, waitingFor: null, profession: null, isNew: true, isChannel: false });
   }
   return userSessions.get(roomId);
 }
 
 // ── Registro silencioso de interés ────────────────────────────────────────────
 const nicheInterest = new Map();
-function registerInterest(roomId, niche) {
+
+// NUEVO: también guardamos a qué se dedica cada persona por nicho
+// { niche → { roomIds: Set, professions: Map<roomId, profession> } }
+function registerInterest(roomId, niche, profession) {
   const key = niche.toLowerCase().trim();
-  if (!nicheInterest.has(key)) nicheInterest.set(key, new Set());
-  nicheInterest.get(key).add(roomId);
+  if (!nicheInterest.has(key)) nicheInterest.set(key, { roomIds: new Set(), professions: new Map() });
+  const entry = nicheInterest.get(key);
+  entry.roomIds.add(roomId);
+  if (profession) entry.professions.set(roomId, profession);
 }
+
 function getInterestCount(niche) {
   const key = niche.toLowerCase().trim();
-  return nicheInterest.has(key) ? nicheInterest.get(key).size : 0;
+  if (!nicheInterest.has(key)) return 0;
+  return nicheInterest.get(key).roomIds.size;
+}
+
+// NUEVO: cuántas personas con la misma profesión están en este nicho
+function getSameProfessionCount(niche, profession) {
+  if (!profession) return 0;
+  const key = niche.toLowerCase().trim();
+  if (!nicheInterest.has(key)) return 0;
+  const profs = nicheInterest.get(key).professions;
+  let count = 0;
+  for (const p of profs.values()) {
+    if (p.toLowerCase() === profession.toLowerCase()) count++;
+  }
+  return count;
 }
 
 // ── Datos ─────────────────────────────────────────────────────────────────────
@@ -104,19 +115,15 @@ async function getPostComments(storyId) {
   } catch(e) { return ''; }
 }
 
-async function analyzeWithGroq(keyword, mentions, example, snippet, comments, lang, profession) {
+async function analyzeWithGroq(keyword, mentions, example, snippet, comments, lang) {
   if (!GROQ_API_KEY) return null;
   const isEs = lang !== 'en';
-  // Si tenemos profesión, la incluimos en el prompt para personalizar el análisis
-  const profCtx = profession
-    ? (isEs ? ' El usuario es: ' + profession + '.' : ' The user is: ' + profession + '.')
-    : '';
   try {
     const prompt = isEs
-      ? 'Analista de oportunidades.' + profCtx + ' Personas buscan solución a: "' + keyword + '". ' + mentions + ' discusiones. ' +
+      ? 'Analista de oportunidades. Personas buscan solución a: "' + keyword + '". ' + mentions + ' discusiones. ' +
         (example ? 'Post: "' + example + '". ' : '') + (comments ? 'Comentarios: "' + comments + '". ' : '') +
         'Responde en español sin markdown:\n💬 Lo que dice la gente: [2 líneas]\n😤 El dolor principal: [1 frase]\n💡 Oportunidad: [1 frase]\n❓ [1 pregunta de validación]'
-      : 'Market analyst.' + profCtx + ' People seek solution to: "' + keyword + '". ' + mentions + ' discussions. ' +
+      : 'Market analyst. People seek solution to: "' + keyword + '". ' + mentions + ' discussions. ' +
         (example ? 'Post: "' + example + '". ' : '') + (comments ? 'Comments: "' + comments + '". ' : '') +
         'Answer in English without markdown:\n💬 What people say: [2 lines]\n😤 Main pain: [1 sentence]\n💡 Opportunity: [1 sentence]\n❓ [1 validation question]';
     const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
@@ -127,23 +134,20 @@ async function analyzeWithGroq(keyword, mentions, example, snippet, comments, la
   } catch(e) { return null; }
 }
 
-async function validateIdea(idea, lang, industry, profession) {
+async function validateIdea(idea, lang, industry) {
   if (!GROQ_API_KEY) return null;
   const isEs = lang !== 'en';
   const hn    = await searchHackerNews(idea + ' problem pain');
   const devto = await searchDevTo(idea);
   const total = hn.count + devto.count;
   const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
-  const profCtx = profession
-    ? (isEs ? ' El usuario es: ' + profession + '.' : ' The user is: ' + profession + '.')
-    : '';
   try {
     const prompt = isEs
-      ? 'Valida si existe demanda para: "' + idea + '"' + (industry ? ' (industria: ' + industry + ')' : '') + profCtx +
+      ? 'Valida si existe demanda para: "' + idea + '"' + (industry ? ' (industria: ' + industry + ')' : '') +
         '. Encontré ' + total + ' discusiones.' + (hn.example ? ' Ejemplo: "' + hn.example + '".' : '') +
         (comments ? ' Comentarios: "' + comments + '".' : '') +
         '\nSin markdown:\n✅ o ❌ Veredicto: [existe o no el problema]\n📊 Evidencia: [qué encontré]\n🎯 Oportunidad: [cómo monetizar si existe]\n⚠️ Riesgo: [qué podría fallar]'
-      : 'Validate demand for: "' + idea + '"' + (industry ? ' (industry: ' + industry + ')' : '') + profCtx +
+      : 'Validate demand for: "' + idea + '"' + (industry ? ' (industry: ' + industry + ')' : '') +
         '. Found ' + total + ' discussions.' + (hn.example ? ' Example: "' + hn.example + '".' : '') +
         '\nNo markdown:\n✅ or ❌ Verdict: [problem exists or not]\n📊 Evidence: [what I found]\n🎯 Opportunity: [how to monetize]\n⚠️ Risk: [what could fail]';
     const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
@@ -166,38 +170,36 @@ async function analyzePatterns() {
 // ── Textos i18n ───────────────────────────────────────────────────────────────
 const T = {
   es: {
-    welcome:        '👋 Soy **IdeaScout**\n\nTe ayudo a:\n✅ **Validar** si tu idea tiene mercado real\n🔭 **Explorar** qué problemas reales hay en tu industria\n\n¿Qué hacemos?',
-    askProfession:  '¿A qué te dedicas o qué profesión tienes?\n\nEj: contador, médico, abogado, desarrollador, emprendedor...\n_(Esto me ayuda a personalizar el análisis para ti)_',
-    profSaved:      '✅ Guardado. Usaré eso para personalizar tus análisis.',
-    askIndustry:    '¿A qué industria perteneces o en qué área trabajas?\n\nEj: contabilidad, salud, educación, tecnología...\n_(No necesitas tener profesión específica)_',
-    askIdea:        '¿Cuál es tu idea o el problema que quieres resolver?\n\nEscríbela brevemente. Ej: _"app para contadores sin errores en facturas"_',
-    validating:     '🔍 Buscando evidencia real en internet...',
-    exploring:      '🔍 Buscando problemas reales en tu industria...',
-    noData:         '⚠️ Pocas discusiones encontradas. Puede ser un mercado muy nuevo o muy específico.',
-    interested:     '👥 **{n} personas** en IdeaScout también exploran este nicho.',
-    onlyYou:        '👥 **Eres el primero** en explorar este nicho aquí.',
-    connectPaid:    '💎 ¿Ver quiénes son? → próximamente con $SUPR',
-    menuLabel:      '¿Qué hacemos?',
-    unlockMore:     '🔓 **¿Quieres explorar más nichos?**\n\nYa usaste tus {free} exploraciones gratuitas.\n\nDesbloquea **5 búsquedas extra** por **10 $SUPR**.\n\n_(Funcionalidad de pago en construcción — conéctate pronto)_',
-    unlockSuccess:  '🎉 ¡Desbloqueado! Ya tienes acceso a exploraciones extra.',
-    help:           '**IdeaScout — Ayuda**\n\n✅ **Validar** — dime tu idea, te digo si hay mercado\n🔭 **Explorar** — dime tu industria, busco problemas reales\n📊 **Tendencias** — top oportunidades de la semana\n👤 **Profesión** — configura tu perfil\n\n**Comandos rápidos:**\n`/v [idea]` — validar idea\n`/e [industria]` — explorar nicho\n`/t` — ver tendencias\n`/p [profesión]` — guardar tu profesión\n\nO escribe directamente: _"valida mi idea de..."_',
+    welcome:     '👋 Soy **IdeaScout**\n\nTe ayudo a:\n✅ **Validar** si tu idea tiene mercado real\n🔭 **Explorar** qué problemas reales hay en tu industria\n\n¿Qué hacemos?',
+    askProfession: '¿A qué te dedicas? (ej: contador, abogado, médico, desarrollador...)\n\nEsto me ayuda a personalizar los resultados para ti 🎯',
+    professionSaved: '✅ Guardado. Usaré tu perfil para personalizar las búsquedas.',
+    askIndustry: '¿A qué industria perteneces o en qué área trabajas?\n\nEj: contabilidad, salud, educación, tecnología...\n_(No necesitas tener profesión específica)_',
+    askIdea:     '¿Cuál es tu idea o el problema que quieres resolver?\n\nEscríbela brevemente. Ej: _"app para contadores sin errores en facturas"_',
+    validating:  '🔍 Buscando evidencia real en internet...',
+    exploring:   '🔍 Buscando problemas reales en tu industria...',
+    noData:      '⚠️ Pocas discusiones encontradas. Puede ser un mercado muy nuevo o muy específico.',
+    interested:  '👥 **{n} personas** en IdeaScout también exploran este nicho.',
+    interestedProf: '👥 **{n} {prof}** también explorando esto.',
+    onlyYou:     '👥 **Eres el primero** en explorar este nicho aquí.',
+    connectPaid: '💎 ¿Ver quiénes son? → próximamente con $SUPR',
+    menuLabel:   '¿Qué hacemos?',
+    help:        '**IdeaScout — Ayuda**\n\n✅ **Validar** — dime tu idea, te digo si hay mercado\n🔭 **Explorar** — dime tu industria, busco problemas reales\n📊 **Tendencias** — top oportunidades de la semana\n\nTambién puedes escribir directamente:\n_"valida mi idea de..."_ o _"qué problemas hay en salud"_',
   },
   en: {
-    welcome:        '👋 I\'m **IdeaScout**\n\nI help you:\n✅ **Validate** if your idea has real market demand\n🔭 **Explore** what real problems exist in your industry\n\nWhat do we do?',
-    askProfession:  'What do you do for a living or what\'s your profession?\n\nEx: accountant, doctor, lawyer, developer, entrepreneur...\n_(This helps me personalise the analysis for you)_',
-    profSaved:      '✅ Saved. I\'ll use that to personalise your analysis.',
-    askIndustry:    'What industry do you belong to or work in?\n\nEx: accounting, health, education, tech...\n_(No specific profession needed)_',
-    askIdea:        'What\'s your idea or the problem you want to solve?\n\nDescribe it briefly. Ex: _"app for accountants to manage invoices without errors"_',
-    validating:     '🔍 Searching for real evidence on the internet...',
-    exploring:      '🔍 Searching for real problems in your industry...',
-    noData:         '⚠️ Few discussions found. This might be a very new or niche market.',
-    interested:     '👥 **{n} people** on IdeaScout are also exploring this niche.',
-    onlyYou:        '👥 **You\'re the first** to explore this niche here.',
-    connectPaid:    '💎 See who they are? → coming soon with $SUPR',
-    menuLabel:      'What do we do?',
-    unlockMore:     '🔓 **Want to explore more niches?**\n\nYou\'ve used your {free} free explorations.\n\nUnlock **5 extra searches** for **10 $SUPR**.\n\n_(Payment feature under construction — coming soon)_',
-    unlockSuccess:  '🎉 Unlocked! You now have access to extra explorations.',
-    help:           '**IdeaScout — Help**\n\n✅ **Validate** — tell me your idea, I\'ll check the market\n🔭 **Explore** — tell me your industry, I\'ll find real problems\n📊 **Trends** — top opportunities this week\n👤 **Profession** — configure your profile\n\n**Quick commands:**\n`/v [idea]` — validate idea\n`/e [industry]` — explore niche\n`/t` — see trends\n`/p [profession]` — save your profession\n\nOr type directly: _"validate my idea of..."_',
+    welcome:     '👋 I\'m **IdeaScout**\n\nI help you:\n✅ **Validate** if your idea has real market demand\n🔭 **Explore** what real problems exist in your industry\n\nWhat do we do?',
+    askProfession: 'What do you do for a living? (e.g. accountant, lawyer, developer, teacher...)\n\nThis helps me personalize results for you 🎯',
+    professionSaved: '✅ Saved. I\'ll use your profile to tailor the searches.',
+    askIndustry: 'What industry do you belong to or work in?\n\nEx: accounting, health, education, tech...\n_(No specific profession needed)_',
+    askIdea:     'What\'s your idea or the problem you want to solve?\n\nDescribe it briefly. Ex: _"app for accountants to manage invoices without errors"_',
+    validating:  '🔍 Searching for real evidence on the internet...',
+    exploring:   '🔍 Searching for real problems in your industry...',
+    noData:      '⚠️ Few discussions found. This might be a very new or niche market.',
+    interested:  '👥 **{n} people** on IdeaScout are also exploring this niche.',
+    interestedProf: '👥 **{n} {prof}** also exploring this.',
+    onlyYou:     '👥 **You\'re the first** to explore this niche here.',
+    connectPaid: '💎 See who they are? → coming soon with $SUPR',
+    menuLabel:   'What do we do?',
+    help:        '**IdeaScout — Help**\n\n✅ **Validate** — tell me your idea, I\'ll check the market\n🔭 **Explore** — tell me your industry, I\'ll find real problems\n📊 **Trends** — top opportunities this week\n\nYou can also write directly:\n_"validate my idea of..."_ or _"what problems exist in health"_',
   }
 };
 
@@ -208,144 +210,98 @@ function t(lang, key, vars) {
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
-async function sendMenu(roomId, lang, isChannel = false) {
+async function sendMenu(roomId, lang) {
   const isEs = lang !== 'en';
-  const session = getSession(roomId);
-  const rows = [
+  await agent.sendReplyMarkupMessage('buttons', roomId, t(lang, 'menuLabel'), [
     [
-      { text: '✅ ' + (isEs ? 'Validar mi idea'  : 'Validate my idea'), callback_data: 'ACTION:validate' },
-      { text: '🔭 ' + (isEs ? 'Explorar nichos'  : 'Explore niches'),   callback_data: 'ACTION:explore'  },
+      { text: '✅ ' + (isEs ? 'Validar mi idea'    : 'Validate my idea'), callback_data: 'ACTION:validate' },
+      { text: '🔭 ' + (isEs ? 'Explorar nichos'    : 'Explore niches'),   callback_data: 'ACTION:explore'  },
     ],
     [
-      { text: '📊 ' + (isEs ? 'Tendencias'        : 'Trends'),           callback_data: 'ACTION:trends'   },
-      { text: '👤 ' + (isEs ? 'Mi profesión'      : 'My profession'),    callback_data: 'ACTION:profession'},
+      { text: '📊 ' + (isEs ? 'Tendencias'         : 'Trends'),           callback_data: 'ACTION:trends'   },
+      { text: '🌐 ' + (isEs ? 'English'            : 'Español'),          callback_data: 'ACTION:lang'     },
     ],
-    [
-      { text: '🌐 ' + (isEs ? 'English'           : 'Español'),          callback_data: 'ACTION:lang'     },
-      { text: '❓ ' + (isEs ? 'Ayuda'             : 'Help'),             callback_data: 'ACTION:help'     },
-    ],
-  ];
-  // Mostrar botón de desbloqueo si el usuario ya agotó sus exploraciones gratuitas
-  if (session.exploreCount >= FREE_EXPLORES && !session.unlockedExtra) {
-    rows.push([{ text: '🔓 ' + (isEs ? 'Explorar más nichos ($SUPR)' : 'Explore more niches ($SUPR)'), callback_data: 'ACTION:unlock_more' }]);
-  }
-  if (agent) {
-    await agent.sendReplyMarkupMessage('buttons', roomId, t(lang, 'menuLabel'), rows);
-  }
+    [{ text: '❓ ' + (isEs ? 'Ayuda'               : 'Help'),             callback_data: 'ACTION:help'     }],
+  ]);
 }
 
-async function sendInterestFooter(roomId, niche, lang, isChannel = false) {
-  registerInterest(roomId, niche);
-  const count = getInterestCount(niche);
-  const msg = (count > 1 ? t(lang, 'interested', { n: count }) : t(lang, 'onlyYou')) + '\n' + t(lang, 'connectPaid');
+// NUEVO: footer con conteo mejorado — muestra profesión si hay match
+async function sendInterestFooter(roomId, niche, lang, isChannel) {
+  const s          = getSession(roomId);
+  const profession = s.profession;
+  registerInterest(roomId, niche, profession);
+
+  const total     = getInterestCount(niche);
+  const sameProf  = getSameProfessionCount(niche, profession);
+
+  let msg = '';
+  if (total <= 1) {
+    msg = t(lang, 'onlyYou');
+  } else if (sameProf > 1 && profession) {
+    // Hay otros con la misma profesión — más relevante para el usuario
+    const profPlural = profession.endsWith('s') ? profession : profession + 's';
+    msg = t(lang, 'interestedProf', { n: sameProf, prof: profPlural });
+  } else {
+    msg = t(lang, 'interested', { n: total });
+  }
+  msg += '\n' + t(lang, 'connectPaid');
   await sendMsg(roomId, msg, isChannel);
 }
 
-// ── Flujo de pago / desbloqueo ────────────────────────────────────────────────
-// STUB: cuando tengas la documentación de SuperDapp Payments, reemplaza el interior
-// de esta función con la llamada al SDK correspondiente. El resto del código no cambia.
-async function handleUnlockMore(roomId, lang, isChannel = false) {
-  const session = getSession(roomId);
-  const isEs = lang !== 'en';
-
-  // TODO: iniciar flujo de pago real con el SDK de SuperDapp
-  // Ejemplo (pseudocódigo):
-  //   const paymentResult = await agent.requestPayment({ roomId, amount: 10, token: 'SUPR', reason: 'IdeaScout extra explores' });
-  //   if (paymentResult.success) { session.unlockedExtra = true; }
-
-  // Por ahora mostramos el mensaje informativo y desbloqueamos en modo demo
-  await sendMsg(roomId, t(lang, 'unlockMore', { free: FREE_EXPLORES }), isChannel);
-
-  // Botón de confirmar pago (stub — en producción este botón lo maneja el SDK)
-  if (agent) {
-    await agent.sendReplyMarkupMessage('buttons', roomId, isEs ? '¿Confirmar?' : 'Confirm?', [
-      [{ text: isEs ? '💳 Pagar 10 $SUPR' : '💳 Pay 10 $SUPR', callback_data: 'ACTION:confirm_payment' }],
-      [{ text: isEs ? '❌ Cancelar'        : '❌ Cancel',        callback_data: 'ACTION:menu'            }],
-    ]);
-  }
-}
-
 // ── Flujos principales ────────────────────────────────────────────────────────
-async function runExplore(roomId, industry, lang, isChannel = false) {
+async function runExplore(roomId, industry, lang, isChannel) {
   const session = getSession(roomId);
-
-  // Verificar límite gratuito
-  if (session.exploreCount >= FREE_EXPLORES && !session.unlockedExtra) {
-    await handleUnlockMore(roomId, lang, isChannel);
-    return;
-  }
-
   session.industry = industry;
-  session.exploreCount++;
-
   await sendMsg(roomId, t(lang, 'exploring'), isChannel);
   const hn    = await searchHackerNews(industry + ' problem frustrated pain');
   const devto = await searchDevTo(industry);
   const total = hn.count + devto.count;
   if (total < 3) {
     await sendMsg(roomId, t(lang, 'noData'), isChannel);
-    await sendMenu(roomId, lang, isChannel);
+    await sendMenu(roomId, lang);
     return;
   }
   const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
-  const analysis = await analyzeWithGroq(industry, total, hn.example || devto.example, hn.snippet, comments, lang, session.profession);
+  const analysis = await analyzeWithGroq(industry, total, hn.example || devto.example, hn.snippet, comments, lang);
   let msg = '🏭 **' + industry + '** — ' + total + (lang === 'en' ? ' discussions\n\n' : ' discusiones\n\n');
   msg += analysis || '✅ ' + (lang === 'en' ? 'Real activity detected in this niche.' : 'Actividad real detectada en este nicho.');
   await sendMsg(roomId, msg, isChannel);
   await sendInterestFooter(roomId, industry, lang, isChannel);
-  await sendMenu(roomId, lang, isChannel);
+  await sendMenu(roomId, lang);
 }
 
-async function runValidate(roomId, idea, lang, isChannel = false) {
+async function runValidate(roomId, idea, lang, isChannel) {
   const session = getSession(roomId);
   await sendMsg(roomId, t(lang, 'validating'), isChannel);
-  const result = await validateIdea(idea, lang, session.industry, session.profession);
+  const result = await validateIdea(idea, lang, session.industry);
   if (!result) {
     await sendMsg(roomId, t(lang, 'noData'), isChannel);
-    await sendMenu(roomId, lang, isChannel);
+    await sendMenu(roomId, lang);
     return;
   }
   await sendMsg(roomId, result.analysis, isChannel);
   await sendInterestFooter(roomId, result.niche, lang, isChannel);
-  await sendMenu(roomId, lang, isChannel);
+  await sendMenu(roomId, lang);
 }
 
-async function runTrends(roomId, lang, isChannel = false) {
+async function runTrends(roomId, lang, isChannel) {
   await sendMsg(roomId, t(lang, 'exploring'), isChannel);
   if (Object.keys(patternCount).length === 0) await analyzePatterns();
   const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
-  if (!sorted.length) { await sendMsg(roomId, t(lang, 'noData'), isChannel); await sendMenu(roomId, lang, isChannel); return; }
+  if (!sorted.length) { await sendMsg(roomId, t(lang, 'noData'), isChannel); await sendMenu(roomId, lang); return; }
   const isEs = lang !== 'en';
   let msg = isEs ? '📊 **Top oportunidades esta semana:**\n\n' : '📊 **Top opportunities this week:**\n\n';
   sorted.forEach(([kw, c], i) => { msg += (i+1) + '. ' + kw + ' → ' + c + (isEs ? ' discusiones\n' : ' discussions\n'); });
   await sendMsg(roomId, msg, isChannel);
-  if (agent) {
-    const rows = sorted.map(([kw], i) => [{ text: (i+1) + '. ' + kw, callback_data: 'DEEP:' + i }]);
-    rows.push([{ text: isEs ? '🔙 Volver' : '🔙 Back', callback_data: 'ACTION:menu' }]);
-    await agent.sendReplyMarkupMessage('buttons', roomId, isEs ? '¿Cuál profundizas?' : 'Which one to explore?', rows);
-  }
+  const rows = sorted.map(([kw], i) => [{ text: (i+1) + '. ' + kw, callback_data: 'DEEP:' + i }]);
+  rows.push([{ text: isEs ? '🔙 Volver' : '🔙 Back', callback_data: 'ACTION:menu' }]);
+  await agent.sendReplyMarkupMessage('buttons', roomId, isEs ? '¿Cuál profundizas?' : 'Which one to explore?', rows);
 }
 
-async function runSetProfession(roomId, profession, lang, isChannel = false) {
-  const session = getSession(roomId);
-  session.profession = profession.trim();
-  await sendMsg(roomId, t(lang, 'profSaved'), isChannel);
-  await sendMenu(roomId, lang, isChannel);
-}
-
-async function detectIntent(text, session, roomId, isChannel = false) {
+async function detectIntent(text, session, roomId, isChannel) {
   const lang  = session.lang;
   const lower = text.toLowerCase();
-  // Saludo o mensaje abierto corto → bienvenida con menú
-if (lower.match(/^(hola|hello|hi|hey|buenas|buenos|good|start|inicio|comenzar|empezar|ayuda|help|\s*)$/)) {
-  const isEs = lang !== 'en';
-  const greeting = isEs
-    ? '👋 ¡Hola! Soy **IdeaScout**. ¿Por dónde empezamos?'
-    : '👋 Hey! I\'m **IdeaScout**. Where do you want to start?';
-  await sendMsg(roomId, greeting, isChannel);
-  await sendMenu(roomId, lang, isChannel);
-  return true;
-}
+  const isEs  = lang !== 'en';
 
   if (lower.match(/valid|hay mercado|is there market|mi idea|my idea|idea de .+/i)) {
     const ideaMatch = text.match(/idea(?:\s+de)?\s+(.+)/i) || text.match(/valid(?:a(?:r)?)?\s+(.+)/i);
@@ -365,13 +321,6 @@ if (lower.match(/^(hola|hello|hi|hey|buenas|buenos|good|start|inicio|comenzar|em
     await runTrends(roomId, lang, isChannel);
     return true;
   }
-  if (lower.match(/profesion|profesión|profession|trabajo|soy |i am |work as/i)) {
-    const profMatch = text.match(/(?:soy|trabajo como|me dedico a|profession:|i am|work as)\s+(.+)/i);
-    if (profMatch && profMatch[1].length > 2) { await runSetProfession(roomId, profMatch[1].trim(), lang, isChannel); return true; }
-    session.waitingFor = 'profession';
-    await sendMsg(roomId, t(lang, 'askProfession'), isChannel);
-    return true;
-  }
   return false;
 }
 
@@ -381,13 +330,14 @@ function registerHandlers() {
   if (!agent || handlersRegistered) return;
   handlersRegistered = true;
 
-  // /start — bienvenida + pregunta de profesión si no la tiene
   agent.addCommand('/start', async ({ roomId }) => {
     const s = getSession(roomId);
-    await sendMsg(roomId, t(s.lang, 'welcome'));
-    if (!s.profession) {
+    await agent.sendConnectionMessage(roomId, t(s.lang, 'welcome'));
+    // NUEVO: si es primera vez, preguntar profesión antes del menú
+    if (s.isNew) {
+      s.isNew = false;
       s.waitingFor = 'profession';
-      await sendMsg(roomId, t(s.lang, 'askProfession'));
+      await agent.sendConnectionMessage(roomId, t(s.lang, 'askProfession'));
     } else {
       await sendMenu(roomId, s.lang);
     }
@@ -395,7 +345,7 @@ function registerHandlers() {
 
   agent.addCommand('/help', async ({ roomId }) => {
     const s = getSession(roomId);
-    await sendMsg(roomId, t(s.lang, 'help'));
+    await agent.sendConnectionMessage(roomId, t(s.lang, 'help'));
     await sendMenu(roomId, s.lang);
   });
 
@@ -404,50 +354,20 @@ function registerHandlers() {
     await sendMenu(roomId, s.lang);
   });
 
-  // /validar y alias corto /v
-  const handleValidar = async ({ roomId, message }) => {
+  agent.addCommand('/validar', async ({ roomId, message }) => {
     const s    = getSession(roomId);
-    const raw  = message?.body?.m?.body || message?.data || '';
-    const text = raw.replace(/^\/v(?:alidar)?\s*/i, '').trim();
-    if (!text) { s.waitingFor = 'idea'; await sendMsg(roomId, t(s.lang, 'askIdea')); return; }
-    await runValidate(roomId, text, s.lang);
-  };
-  agent.addCommand('/validar', handleValidar);
-  agent.addCommand('/v',       handleValidar);
+    const text = (message?.body?.m?.body || '').replace('/validar', '').trim();
+    if (!text) { s.waitingFor = 'idea'; await agent.sendConnectionMessage(roomId, t(s.lang, 'askIdea')); return; }
+    await runValidate(roomId, text, s.lang, s.isChannel);
+  });
 
-  // /explorar y alias corto /e
-  const handleExplorar = async ({ roomId, message }) => {
+  agent.addCommand('/explorar', async ({ roomId, message }) => {
     const s    = getSession(roomId);
-    const raw  = message?.body?.m?.body || message?.data || '';
-    const text = raw.replace(/^\/e(?:xplorar)?\s*/i, '').trim();
-    if (!text) { s.waitingFor = 'industry'; await sendMsg(roomId, t(s.lang, 'askIndustry')); return; }
-    await runExplore(roomId, text, s.lang);
-  };
-  agent.addCommand('/explorar', handleExplorar);
-  agent.addCommand('/e',        handleExplorar);
+    const text = (message?.body?.m?.body || '').replace('/explorar', '').trim();
+    if (!text) { s.waitingFor = 'industry'; await agent.sendConnectionMessage(roomId, t(s.lang, 'askIndustry')); return; }
+    await runExplore(roomId, text, s.lang, s.isChannel);
+  });
 
-  // /tendencias y alias corto /t
-  const handleTendencias = async ({ roomId }) => {
-    const s = getSession(roomId);
-    await runTrends(roomId, s.lang);
-  };
-  agent.addCommand('/tendencias', handleTendencias);
-  agent.addCommand('/trends',     handleTendencias);
-  agent.addCommand('/t',          handleTendencias);
-
-  // /profesion y alias corto /p — guarda o pregunta la profesión
-  const handleProfesion = async ({ roomId, message }) => {
-    const s    = getSession(roomId);
-    const raw  = message?.body?.m?.body || message?.data || '';
-    const text = raw.replace(/^\/p(?:rofesi[oó]n)?\s*/i, '').trim();
-    if (!text) { s.waitingFor = 'profession'; await sendMsg(roomId, t(s.lang, 'askProfession')); return; }
-    await runSetProfession(roomId, text, s.lang);
-  };
-  agent.addCommand('/profesion', handleProfesion);
-  agent.addCommand('/profession', handleProfesion);
-  agent.addCommand('/p',          handleProfesion);
-
-  // callback_query — botones inline
   agent.addCommand('callback_query', async ({ message, roomId }) => {
     const cmd  = message.callback_command || '';
     const data = message.data             || '';
@@ -455,67 +375,72 @@ function registerHandlers() {
     const lang = s.lang;
 
     if (cmd === 'ACTION') {
-      if (data === 'validate')  { s.waitingFor = 'idea';       await sendMsg(roomId, t(lang, 'askIdea'));       return; }
-      if (data === 'explore') {
-        if (s.industry) { await runExplore(roomId, s.industry, lang); }
-        else { s.waitingFor = 'industry'; await sendMsg(roomId, t(lang, 'askIndustry')); }
+      if (data === 'validate') { s.waitingFor = 'idea'; await agent.sendConnectionMessage(roomId, t(lang, 'askIdea')); return; }
+      if (data === 'explore')  {
+        if (s.industry) { await runExplore(roomId, s.industry, lang, s.isChannel); }
+        else { s.waitingFor = 'industry'; await agent.sendConnectionMessage(roomId, t(lang, 'askIndustry')); }
         return;
       }
-      if (data === 'trends')    { await runTrends(roomId, lang);                                                return; }
-      if (data === 'profession'){ s.waitingFor = 'profession'; await sendMsg(roomId, t(lang, 'askProfession')); return; }
-      if (data === 'unlock_more'){ await handleUnlockMore(roomId, lang);                                        return; }
-      if (data === 'confirm_payment') {
-        // STUB: aquí va la confirmación real del pago con el SDK de SuperDapp
-        s.unlockedExtra = true;
-        await sendMsg(roomId, t(lang, 'unlockSuccess'));
-        await sendMenu(roomId, lang);
-        return;
-      }
-      if (data === 'lang') {
-        s.lang = lang === 'es' ? 'en' : 'es';
-        await sendMsg(roomId, s.lang === 'en' ? '🌐 Switched to English!' : '🌐 ¡Cambiado a Español!');
-        await sendMenu(roomId, s.lang);
-        return;
-      }
-      if (data === 'help') { await sendMsg(roomId, t(lang, 'help')); await sendMenu(roomId, lang); return; }
-      if (data === 'menu') { await sendMenu(roomId, lang);                                         return; }
+      if (data === 'trends') { await runTrends(roomId, lang, s.isChannel); return; }
+      if (data === 'lang')   { s.lang = lang === 'es' ? 'en' : 'es'; await agent.sendConnectionMessage(roomId, s.lang === 'en' ? '🌐 Switched to English!' : '🌐 ¡Cambiado a Español!'); await sendMenu(roomId, s.lang); return; }
+      if (data === 'help')   { await agent.sendConnectionMessage(roomId, t(lang, 'help')); await sendMenu(roomId, lang); return; }
+      if (data === 'menu')   { await sendMenu(roomId, lang); return; }
     }
 
     if (cmd === 'DEEP') {
       const idx    = parseInt(data);
       const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]);
       if (idx >= 0 && idx < sorted.length) {
-        const [kw]  = sorted[idx];
-        const story = topStories[kw] || {};
+        const [kw] = sorted[idx];
+        const story    = topStories[kw] || {};
         const comments = story.storyId ? await getPostComments(story.storyId) : '';
-        await sendMsg(roomId, t(lang, 'exploring'));
-        const analysis = await analyzeWithGroq(kw, patternCount[kw], story.title, story.snippet, comments, lang, s.profession);
+        await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
+        const analysis = await analyzeWithGroq(kw, patternCount[kw], story.title, story.snippet, comments, lang);
         const isEs = lang !== 'en';
-        const msg  = '🔍 **' + kw + '**\n\n' + (analysis || (isEs ? '✅ Alta demanda detectada.' : '✅ High demand detected.'));
-        await sendMsg(roomId, msg);
-        await sendInterestFooter(roomId, kw, lang);
+        let msg = '🔍 **' + kw + '**\n\n' + (analysis || (isEs ? '✅ Alta demanda detectada.' : '✅ High demand detected.'));
+        await agent.sendConnectionMessage(roomId, msg);
+        await sendInterestFooter(roomId, kw, lang, s.isChannel);
         await sendMenu(roomId, lang);
       }
       return;
     }
   });
 
-  // message — texto libre
   agent.addCommand('message', async ({ message, roomId }) => {
     const m    = message.body && message.body.m;
     const text = (typeof m === 'object' && typeof m.body === 'string' ? m.body : message.data) || '';
     if (!text || (message.rawMessage && message.rawMessage.isBot)) return;
-
-    const isChannel = !!(message.rawMessage && message.rawMessage.__typename === 'ChannelMessage');
+    const isChannel = message.rawMessage && message.rawMessage.__typename === 'ChannelMessage';
     if (isChannel && message.rawMessage?.isBot) return;
 
     const s    = getSession(roomId);
+    // FIX: guardar isChannel en sesión para que los comandos también lo sepan
+    s.isChannel = isChannel;
     const lang = s.lang;
 
+    // NUEVO: capturar profesión si estamos esperándola
+    if (s.waitingFor === 'profession') {
+      s.waitingFor = null;
+      s.profession = text.trim();
+      // Si no tiene industry guardada, usar profesión como industry por defecto
+      if (!s.industry) s.industry = text.trim();
+      await sendMsg(roomId, t(lang, 'professionSaved'), isChannel);
+      await sendMenu(roomId, lang);
+      return;
+    }
+
     // Respuesta a pregunta pendiente
-    if (s.waitingFor === 'profession') { s.waitingFor = null; await runSetProfession(roomId, text.trim(), lang, isChannel); return; }
-    if (s.waitingFor === 'industry')   { s.waitingFor = null; await runExplore(roomId, text.trim(), lang, isChannel);       return; }
-    if (s.waitingFor === 'idea')       { s.waitingFor = null; await runValidate(roomId, text.trim(), lang, isChannel);      return; }
+    if (s.waitingFor === 'industry') { s.waitingFor = null; await runExplore(roomId, text.trim(), lang, isChannel); return; }
+    if (s.waitingFor === 'idea')     { s.waitingFor = null; await runValidate(roomId, text.trim(), lang, isChannel); return; }
+
+    // NUEVO: primer mensaje de un usuario nuevo que no usó /start
+    if (s.isNew) {
+      s.isNew = false;
+      await sendMsg(roomId, t(lang, 'welcome'), isChannel);
+      s.waitingFor = 'profession';
+      await sendMsg(roomId, t(lang, 'askProfession'), isChannel);
+      return;
+    }
 
     // Detectar intención
     const handled = await detectIntent(text, s, roomId, isChannel);
@@ -525,14 +450,11 @@ function registerHandlers() {
     if (GROQ_API_KEY) {
       try {
         const isEs = lang !== 'en';
-        const profCtx = s.profession
-          ? (isEs ? ' El usuario es ' + s.profession + '.' : ' The user is ' + s.profession + '.')
-          : '';
         const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
           { model: 'llama-3.1-8b-instant', messages: [
             { role: 'system', content: isEs
-              ? 'Eres IdeaScout, ayudas a validar ideas de negocio y encontrar oportunidades de mercado.' + profCtx + ' Responde en español, breve y útil.'
-              : 'You are IdeaScout, you help validate business ideas and find market opportunities.' + profCtx + ' Answer in English, brief and helpful.' },
+              ? 'Eres IdeaScout, ayudas a validar ideas de negocio y encontrar oportunidades de mercado. Responde en español, breve y útil.'
+              : 'You are IdeaScout, you help validate business ideas and find market opportunities. Answer in English, brief and helpful.' },
             { role: 'user', content: text }
           ], max_tokens: 300 },
           { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
@@ -542,7 +464,7 @@ function registerHandlers() {
         await sendMsg(roomId, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?', isChannel);
       }
     }
-    await sendMenu(roomId, lang, isChannel);
+    await sendMenu(roomId, lang);
   });
 
   console.log('[IdeaScout] Handlers registrados ✅');
