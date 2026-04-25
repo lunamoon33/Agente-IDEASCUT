@@ -23,6 +23,7 @@ if (agent) {
     if (rm?.memberId)  return rm.memberId;
     return '';
   };
+}
 
 async function sendMsg(roomId, text, isChannel = false) {
   if (!agent) return;
@@ -66,7 +67,8 @@ const SEARCH_QUERIES = [
 async function searchHackerNews(query) {
   try {
     const r = await axios.get('https://hn.algolia.com/api/v1/search?query=' + encodeURIComponent(query) + '&tags=story&hitsPerPage=30');
-    const hits = r.data.hits; const top = hits[0];
+    const hits = r.data.hits;
+    const top  = hits[0];
     return { count: hits.length, example: top?.title || '', snippet: top?.story_text?.slice(0, 200) || '', storyId: top?.objectID || '' };
   } catch(e) { return { count: 0, example: '', snippet: '', storyId: '' }; }
 }
@@ -131,9 +133,13 @@ async function validateIdea(idea, lang, industry) {
 async function analyzePatterns() {
   patternCount = {}; topStories = {};
   for (const kw of SEARCH_QUERIES) {
-    const hn = await searchHackerNews(kw); const devto = await searchDevTo(kw);
+    const hn    = await searchHackerNews(kw);
+    const devto = await searchDevTo(kw);
     const total = hn.count + devto.count;
-    if (total >= 3) { patternCount[kw] = total; topStories[kw] = { title: hn.example || devto.example, snippet: hn.snippet, storyId: hn.storyId }; }
+    if (total >= 3) {
+      patternCount[kw] = total;
+      topStories[kw]   = { title: hn.example || devto.example, snippet: hn.snippet, storyId: hn.storyId };
+    }
   }
 }
 
@@ -141,8 +147,8 @@ async function analyzePatterns() {
 const T = {
   es: {
     welcome:     '👋 Soy **IdeaScout**\n\nTe ayudo a:\n✅ **Validar** si tu idea tiene mercado real\n🔭 **Explorar** qué problemas reales hay en tu industria\n\n¿Qué hacemos?',
-    askIndustry: '¿A qué industria perteneces o en qué área trabajas?\n\nEj: contabilidad, salud, educación, tecnología...\n_(No necesitas tener profesión específica)_',
-    askIdea:     '¿Cuál es tu idea o el problema que quieres resolver?\n\nEscríbela brevemente. Ej: _"app para contadores sin errores en facturas"_',
+    askIndustry: '¿A qué industria perteneces o en qué área trabajas?\n\nEj: contabilidad, salud, educación, tecnología...',
+    askIdea:     '¿Cuál es tu idea o el problema que quieres resolver?\n\nEj: "app para contadores sin errores en facturas"',
     validating:  '🔍 Buscando evidencia real en internet...',
     exploring:   '🔍 Buscando problemas reales en tu industria...',
     noData:      '⚠️ Pocas discusiones encontradas. Puede ser un mercado muy nuevo o muy específico.',
@@ -150,12 +156,12 @@ const T = {
     onlyYou:     '👥 **Eres el primero** en explorar este nicho aquí.',
     connectPaid: '💎 ¿Ver quiénes son? → próximamente con $SUPR',
     menuLabel:   '¿Qué hacemos?',
-    help:        '**IdeaScout — Ayuda**\n\n✅ **Validar** — dime tu idea, te digo si hay mercado\n🔭 **Explorar** — dime tu industria, busco problemas reales\n📊 **Tendencias** — top oportunidades de la semana\n\nTambién puedes escribir directamente:\n_"valida mi idea de..."_ o _"qué problemas hay en salud"_',
+    help:        '**IdeaScout — Ayuda**\n\n✅ **Validar** — dime tu idea, te digo si hay mercado\n🔭 **Explorar** — dime tu industria, busco problemas reales\n📊 **Tendencias** — top oportunidades de la semana\n\nEscribe directamente:\n"valida mi idea de..." o "qué problemas hay en salud"',
   },
   en: {
     welcome:     '👋 I\'m **IdeaScout**\n\nI help you:\n✅ **Validate** if your idea has real market demand\n🔭 **Explore** what real problems exist in your industry\n\nWhat do we do?',
-    askIndustry: 'What industry do you belong to or work in?\n\nEx: accounting, health, education, tech...\n_(No specific profession needed)_',
-    askIdea:     'What\'s your idea or the problem you want to solve?\n\nDescribe it briefly. Ex: _"app for accountants to manage invoices without errors"_',
+    askIndustry: 'What industry do you belong to or work in?\n\nEx: accounting, health, education, tech...',
+    askIdea:     'What\'s your idea or the problem you want to solve?\n\nEx: "app for accountants to manage invoices without errors"',
     validating:  '🔍 Searching for real evidence on the internet...',
     exploring:   '🔍 Searching for real problems in your industry...',
     noData:      '⚠️ Few discussions found. This might be a very new or niche market.',
@@ -163,7 +169,7 @@ const T = {
     onlyYou:     '👥 **You\'re the first** to explore this niche here.',
     connectPaid: '💎 See who they are? → coming soon with $SUPR',
     menuLabel:   'What do we do?',
-    help:        '**IdeaScout — Help**\n\n✅ **Validate** — tell me your idea, I\'ll check the market\n🔭 **Explore** — tell me your industry, I\'ll find real problems\n📊 **Trends** — top opportunities this week\n\nYou can also write directly:\n_"validate my idea of..."_ or _"what problems exist in health"_',
+    help:        '**IdeaScout — Help**\n\n✅ **Validate** — tell me your idea, I\'ll check the market\n🔭 **Explore** — tell me your industry, I\'ll find real problems\n📊 **Trends** — top opportunities this week\n\nWrite directly:\n"validate my idea of..." or "what problems exist in health"',
   }
 };
 
@@ -179,94 +185,98 @@ async function sendMenu(roomId, lang, isChannel = false) {
   const buttons = [
     [
       { text: '✅ ' + (isEs ? 'Validar mi idea' : 'Validate my idea'), callback_data: 'ACTION:validate' },
-      { text: '🔭 ' + (isEs ? 'Explorar nichos' : 'Explore niches'),  callback_data: 'ACTION:explore'  },
+      { text: '🔭 ' + (isEs ? 'Explorar nichos' : 'Explore niches'),   callback_data: 'ACTION:explore'  },
     ],
     [
-      { text: '📊 ' + (isEs ? 'Tendencias'      : 'Trends'),          callback_data: 'ACTION:trends'   },
-      { text: '🌐 ' + (isEs ? 'English'         : 'Español'),         callback_data: 'ACTION:lang'     },
+      { text: '📊 ' + (isEs ? 'Tendencias'      : 'Trends'),           callback_data: 'ACTION:trends'   },
+      { text: '🌐 ' + (isEs ? 'English'         : 'Español'),          callback_data: 'ACTION:lang'     },
     ],
-    [{ text: '❓ ' + (isEs ? 'Ayuda'            : 'Help'),            callback_data: 'ACTION:help'     }],
+    [{ text: '❓ ' + (isEs ? 'Ayuda'            : 'Help'),             callback_data: 'ACTION:help'     }],
   ];
   await agent.sendReplyMarkupMessage('buttons', roomId, t(lang, 'menuLabel'), buttons, {}, isChannel ? 'channel' : 'chat');
 }
-async function sendInterestFooter(roomId, niche, lang) {
+
+async function sendInterestFooter(roomId, niche, lang, isChannel = false) {
   registerInterest(roomId, niche);
   const count = getInterestCount(niche);
   const msg = (count > 1 ? t(lang, 'interested', { n: count }) : t(lang, 'onlyYou')) + '\n' + t(lang, 'connectPaid');
-  await agent.sendConnectionMessage(roomId, msg);
+  await sendMsg(roomId, msg, isChannel);
 }
 
 // ── Flujos principales ────────────────────────────────────────────────────────
-async function runExplore(roomId, industry, lang) {
+async function runExplore(roomId, industry, lang, isChannel = false) {
   const session = getSession(roomId);
   session.industry = industry;
-  await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
+  await sendMsg(roomId, t(lang, 'exploring'), isChannel);
   const hn    = await searchHackerNews(industry + ' problem frustrated pain');
   const devto = await searchDevTo(industry);
   const total = hn.count + devto.count;
   if (total < 3) {
-    await agent.sendConnectionMessage(roomId, t(lang, 'noData'));
-    await sendMenu(roomId, lang);
+    await sendMsg(roomId, t(lang, 'noData'), isChannel);
+    await sendMenu(roomId, lang, isChannel);
     return;
   }
   const comments = hn.storyId ? await getPostComments(hn.storyId) : '';
   const analysis = await analyzeWithGroq(industry, total, hn.example || devto.example, hn.snippet, comments, lang);
   let msg = '🏭 **' + industry + '** — ' + total + (lang === 'en' ? ' discussions\n\n' : ' discusiones\n\n');
-  msg += analysis || '✅ ' + (lang === 'en' ? 'Real activity detected in this niche.' : 'Actividad real detectada en este nicho.');
-  await agent.sendConnectionMessage(roomId, msg);
-  await sendInterestFooter(roomId, industry, lang);
-  await sendMenu(roomId, lang);
+  msg += analysis || '✅ ' + (lang === 'en' ? 'Real activity detected.' : 'Actividad real detectada.');
+  await sendMsg(roomId, msg, isChannel);
+  await sendInterestFooter(roomId, industry, lang, isChannel);
+  await sendMenu(roomId, lang, isChannel);
 }
 
-async function runValidate(roomId, idea, lang) {
+async function runValidate(roomId, idea, lang, isChannel = false) {
   const session = getSession(roomId);
-  await agent.sendConnectionMessage(roomId, t(lang, 'validating'));
+  await sendMsg(roomId, t(lang, 'validating'), isChannel);
   const result = await validateIdea(idea, lang, session.industry);
   if (!result) {
-    await agent.sendConnectionMessage(roomId, t(lang, 'noData'));
-    await sendMenu(roomId, lang);
+    await sendMsg(roomId, t(lang, 'noData'), isChannel);
+    await sendMenu(roomId, lang, isChannel);
     return;
   }
-  await agent.sendConnectionMessage(roomId, result.analysis);
-  await sendInterestFooter(roomId, result.niche, lang);
-  await sendMenu(roomId, lang);
+  await sendMsg(roomId, result.analysis, isChannel);
+  await sendInterestFooter(roomId, result.niche, lang, isChannel);
+  await sendMenu(roomId, lang, isChannel);
 }
 
-async function runTrends(roomId, lang) {
-  await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
+async function runTrends(roomId, lang, isChannel = false) {
+  await sendMsg(roomId, t(lang, 'exploring'), isChannel);
   if (Object.keys(patternCount).length === 0) await analyzePatterns();
   const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
-  if (!sorted.length) { await agent.sendConnectionMessage(roomId, t(lang, 'noData')); await sendMenu(roomId, lang); return; }
+  if (!sorted.length) {
+    await sendMsg(roomId, t(lang, 'noData'), isChannel);
+    await sendMenu(roomId, lang, isChannel);
+    return;
+  }
   const isEs = lang !== 'en';
   let msg = isEs ? '📊 **Top oportunidades esta semana:**\n\n' : '📊 **Top opportunities this week:**\n\n';
   sorted.forEach(([kw, c], i) => { msg += (i+1) + '. ' + kw + ' → ' + c + (isEs ? ' discusiones\n' : ' discussions\n'); });
-  await agent.sendConnectionMessage(roomId, msg);
+  await sendMsg(roomId, msg, isChannel);
   const rows = sorted.map(([kw], i) => [{ text: (i+1) + '. ' + kw, callback_data: 'DEEP:' + i }]);
   rows.push([{ text: isEs ? '🔙 Volver' : '🔙 Back', callback_data: 'ACTION:menu' }]);
-  await agent.sendReplyMarkupMessage('buttons', roomId, isEs ? '¿Cuál profundizas?' : 'Which one to explore?', rows);
+  await agent.sendReplyMarkupMessage('buttons', roomId, isEs ? '¿Cuál profundizas?' : 'Which one?', rows, {}, isChannel ? 'channel' : 'chat');
 }
 
-async function detectIntent(text, session, roomId) {
+async function detectIntent(text, session, roomId, isChannel = false) {
   const lang  = session.lang;
   const lower = text.toLowerCase();
-  const isEs  = lang !== 'en';
 
   if (lower.match(/valid|hay mercado|is there market|mi idea|my idea|idea de .+/i)) {
     const ideaMatch = text.match(/idea(?:\s+de)?\s+(.+)/i) || text.match(/valid(?:a(?:r)?)?\s+(.+)/i);
-    if (ideaMatch && ideaMatch[1].length > 3) { await runValidate(roomId, ideaMatch[1].trim(), lang); return true; }
+    if (ideaMatch && ideaMatch[1].length > 3) { await runValidate(roomId, ideaMatch[1].trim(), lang, isChannel); return true; }
     session.waitingFor = 'idea';
-    await agent.sendConnectionMessage(roomId, t(lang, 'askIdea'));
+    await sendMsg(roomId, t(lang, 'askIdea'), isChannel);
     return true;
   }
   if (lower.match(/problema|problem|industria|industry|sector|nicho|niche|explora|explore/i)) {
     const indMatch = text.match(/(?:en|in|industria|industry|sector)\s+(.+)/i);
-    if (indMatch && indMatch[1].length > 2) { await runExplore(roomId, indMatch[1].trim(), lang); return true; }
+    if (indMatch && indMatch[1].length > 2) { await runExplore(roomId, indMatch[1].trim(), lang, isChannel); return true; }
     session.waitingFor = 'industry';
-    await agent.sendConnectionMessage(roomId, t(lang, 'askIndustry'));
+    await sendMsg(roomId, t(lang, 'askIndustry'), isChannel);
     return true;
   }
   if (lower.match(/tendencia|trend|oportunidad|opportunity/i)) {
-    await runTrends(roomId, lang);
+    await runTrends(roomId, lang, isChannel);
     return true;
   }
   return false;
@@ -316,29 +326,38 @@ function registerHandlers() {
     const lang = s.lang;
 
     if (cmd === 'ACTION') {
-      if (data === 'validate') { s.waitingFor = 'idea'; await agent.sendConnectionMessage(roomId, t(lang, 'askIdea')); return; }
-      if (data === 'explore')  {
+      if (data === 'validate') {
+        s.waitingFor = 'idea';
+        await agent.sendConnectionMessage(roomId, t(lang, 'askIdea'));
+        return;
+      }
+      if (data === 'explore') {
         if (s.industry) { await runExplore(roomId, s.industry, lang); }
         else { s.waitingFor = 'industry'; await agent.sendConnectionMessage(roomId, t(lang, 'askIndustry')); }
         return;
       }
       if (data === 'trends') { await runTrends(roomId, lang); return; }
-      if (data === 'lang')   { s.lang = lang === 'es' ? 'en' : 'es'; await agent.sendConnectionMessage(roomId, s.lang === 'en' ? '🌐 Switched to English!' : '🌐 ¡Cambiado a Español!'); await sendMenu(roomId, s.lang); return; }
-      if (data === 'help')   { await agent.sendConnectionMessage(roomId, t(lang, 'help')); await sendMenu(roomId, lang); return; }
-      if (data === 'menu')   { await sendMenu(roomId, lang); return; }
+      if (data === 'lang') {
+        s.lang = lang === 'es' ? 'en' : 'es';
+        await agent.sendConnectionMessage(roomId, s.lang === 'en' ? '🌐 Switched to English!' : '🌐 ¡Cambiado a Español!');
+        await sendMenu(roomId, s.lang);
+        return;
+      }
+      if (data === 'help') { await agent.sendConnectionMessage(roomId, t(lang, 'help')); await sendMenu(roomId, lang); return; }
+      if (data === 'menu') { await sendMenu(roomId, lang); return; }
     }
 
     if (cmd === 'DEEP') {
       const idx    = parseInt(data);
       const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]);
       if (idx >= 0 && idx < sorted.length) {
-        const [kw] = sorted[idx];
+        const [kw]     = sorted[idx];
         const story    = topStories[kw] || {};
         const comments = story.storyId ? await getPostComments(story.storyId) : '';
         await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
         const analysis = await analyzeWithGroq(kw, patternCount[kw], story.title, story.snippet, comments, lang);
         const isEs = lang !== 'en';
-        let msg = '🔍 **' + kw + '**\n\n' + (analysis || (isEs ? '✅ Alta demanda detectada.' : '✅ High demand detected.'));
+        const msg  = '🔍 **' + kw + '**\n\n' + (analysis || (isEs ? '✅ Alta demanda detectada.' : '✅ High demand detected.'));
         await agent.sendConnectionMessage(roomId, msg);
         await sendInterestFooter(roomId, kw, lang);
         await sendMenu(roomId, lang);
@@ -348,24 +367,25 @@ function registerHandlers() {
   });
 
   agent.addCommand('message', async ({ message, roomId }) => {
-    const m    = message.body && message.body.m;
-    const text = (typeof m === 'object' && typeof m.body === 'string' ? m.body : message.data) || '';
+    const m         = message.body && message.body.m;
+    const text      = (typeof m === 'object' && typeof m.body === 'string' ? m.body : message.data) || '';
     if (!text || (message.rawMessage && message.rawMessage.isBot)) return;
-    const isChannel =  !!message.rawMessage && message.rawMessage.__typename === 'ChannelMessage';
-    if (isChannel && message.rawMessage?.isBot) return;
+
+    const isChannel = !!message.rawMessage && message.rawMessage.__typename === 'ChannelMessage';
+    if (isChannel && !text.startsWith('/')) {
+      // En canal solo responde a comandos — texto libre solo en DM
+      return;
+    }
 
     const s    = getSession(roomId);
     const lang = s.lang;
 
-    // Respuesta a pregunta pendiente
     if (s.waitingFor === 'industry') { s.waitingFor = null; await runExplore(roomId, text.trim(), lang); return; }
     if (s.waitingFor === 'idea')     { s.waitingFor = null; await runValidate(roomId, text.trim(), lang); return; }
 
-    // Detectar intención
-    const handled = await detectIntent(text, s, roomId);
+    const handled = await detectIntent(text, s, roomId, isChannel);
     if (handled) return;
 
-    // Respuesta abierta con Groq
     if (GROQ_API_KEY) {
       try {
         const isEs = lang !== 'en';
@@ -378,12 +398,12 @@ function registerHandlers() {
           ], max_tokens: 300 },
           { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
         );
-       await sendMsg(roomId, r.data.choices[0].message.content, isChannel);
-          } catch(e) {
-       await sendMsg(roomId, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?', isChannel);
+        await sendMsg(roomId, r.data.choices[0].message.content, isChannel);
+      } catch(e) {
+        await sendMsg(roomId, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?', isChannel);
       }
     }
-    await sendMenu(roomId, lang);
+    await sendMenu(roomId, lang, isChannel);
   });
 
   console.log('[IdeaScout] Handlers registrados ✅');
