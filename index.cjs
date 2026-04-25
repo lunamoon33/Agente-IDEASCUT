@@ -23,62 +23,37 @@ if (agent) {
     if (rm?.memberId)  return rm.memberId;
     return '';
   };
-  // ── FIX: fuerza t:'channel' para que los mensajes lleguen en tiempo real ──
   const proto = Object.getPrototypeOf(agent);
   proto.sendChannelMessage = async function(channelId, message, options) {
     const msgBody = { body: JSON.stringify({ m: encodeURIComponent(JSON.stringify({ body: message })), t: 'channel' }) };
     return this.client.sendChannelMessage(channelId, { message: msgBody, isSilent: options?.isSilent || false });
   };
 }
-
-// ── FIX: helper que elige canal o DM según contexto ───────────────────────────
-async function sendMsg(roomId, text, isChannel) {
+async function sendMsg(roomId, text, isChannel = false) {
   if (!agent) return;
-  if (isChannel) await agent.sendChannelMessage(roomId, text);
-  else           await agent.sendConnectionMessage(roomId, text);
+  if (isChannel) return agent.sendChannelMessage(roomId, text);
+  return agent.sendConnectionMessage(roomId, text);
 }
 
 // ── Sesiones ──────────────────────────────────────────────────────────────────
 const userSessions = new Map();
 function getSession(roomId) {
   if (!userSessions.has(roomId)) {
-    // NUEVO: profession guarda a qué se dedica el usuario
-    // isNew marca si es primera vez para hacer el onboarding
-    userSessions.set(roomId, { lang: 'es', industry: null, waitingFor: null, profession: null, isNew: true, isChannel: false });
+    userSessions.set(roomId, { lang: 'es', industry: null, waitingFor: null });
   }
   return userSessions.get(roomId);
 }
 
 // ── Registro silencioso de interés ────────────────────────────────────────────
 const nicheInterest = new Map();
-
-// NUEVO: también guardamos a qué se dedica cada persona por nicho
-// { niche → { roomIds: Set, professions: Map<roomId, profession> } }
-function registerInterest(roomId, niche, profession) {
+function registerInterest(roomId, niche) {
   const key = niche.toLowerCase().trim();
-  if (!nicheInterest.has(key)) nicheInterest.set(key, { roomIds: new Set(), professions: new Map() });
-  const entry = nicheInterest.get(key);
-  entry.roomIds.add(roomId);
-  if (profession) entry.professions.set(roomId, profession);
+  if (!nicheInterest.has(key)) nicheInterest.set(key, new Set());
+  nicheInterest.get(key).add(roomId);
 }
-
 function getInterestCount(niche) {
   const key = niche.toLowerCase().trim();
-  if (!nicheInterest.has(key)) return 0;
-  return nicheInterest.get(key).roomIds.size;
-}
-
-// NUEVO: cuántas personas con la misma profesión están en este nicho
-function getSameProfessionCount(niche, profession) {
-  if (!profession) return 0;
-  const key = niche.toLowerCase().trim();
-  if (!nicheInterest.has(key)) return 0;
-  const profs = nicheInterest.get(key).professions;
-  let count = 0;
-  for (const p of profs.values()) {
-    if (p.toLowerCase() === profession.toLowerCase()) count++;
-  }
-  return count;
+  return nicheInterest.has(key) ? nicheInterest.get(key).size : 0;
 }
 
 // ── Datos ─────────────────────────────────────────────────────────────────────
@@ -171,15 +146,12 @@ async function analyzePatterns() {
 const T = {
   es: {
     welcome:     '👋 Soy **IdeaScout**\n\nTe ayudo a:\n✅ **Validar** si tu idea tiene mercado real\n🔭 **Explorar** qué problemas reales hay en tu industria\n\n¿Qué hacemos?',
-    askProfession: '¿A qué te dedicas? (ej: contador, abogado, médico, desarrollador...)\n\nEsto me ayuda a personalizar los resultados para ti 🎯',
-    professionSaved: '✅ Guardado. Usaré tu perfil para personalizar las búsquedas.',
     askIndustry: '¿A qué industria perteneces o en qué área trabajas?\n\nEj: contabilidad, salud, educación, tecnología...\n_(No necesitas tener profesión específica)_',
     askIdea:     '¿Cuál es tu idea o el problema que quieres resolver?\n\nEscríbela brevemente. Ej: _"app para contadores sin errores en facturas"_',
     validating:  '🔍 Buscando evidencia real en internet...',
     exploring:   '🔍 Buscando problemas reales en tu industria...',
     noData:      '⚠️ Pocas discusiones encontradas. Puede ser un mercado muy nuevo o muy específico.',
     interested:  '👥 **{n} personas** en IdeaScout también exploran este nicho.',
-    interestedProf: '👥 **{n} {prof}** también explorando esto.',
     onlyYou:     '👥 **Eres el primero** en explorar este nicho aquí.',
     connectPaid: '💎 ¿Ver quiénes son? → próximamente con $SUPR',
     menuLabel:   '¿Qué hacemos?',
@@ -187,15 +159,12 @@ const T = {
   },
   en: {
     welcome:     '👋 I\'m **IdeaScout**\n\nI help you:\n✅ **Validate** if your idea has real market demand\n🔭 **Explore** what real problems exist in your industry\n\nWhat do we do?',
-    askProfession: 'What do you do for a living? (e.g. accountant, lawyer, developer, teacher...)\n\nThis helps me personalize results for you 🎯',
-    professionSaved: '✅ Saved. I\'ll use your profile to tailor the searches.',
     askIndustry: 'What industry do you belong to or work in?\n\nEx: accounting, health, education, tech...\n_(No specific profession needed)_',
     askIdea:     'What\'s your idea or the problem you want to solve?\n\nDescribe it briefly. Ex: _"app for accountants to manage invoices without errors"_',
     validating:  '🔍 Searching for real evidence on the internet...',
     exploring:   '🔍 Searching for real problems in your industry...',
     noData:      '⚠️ Few discussions found. This might be a very new or niche market.',
     interested:  '👥 **{n} people** on IdeaScout are also exploring this niche.',
-    interestedProf: '👥 **{n} {prof}** also exploring this.',
     onlyYou:     '👥 **You\'re the first** to explore this niche here.',
     connectPaid: '💎 See who they are? → coming soon with $SUPR',
     menuLabel:   'What do we do?',
@@ -225,39 +194,23 @@ async function sendMenu(roomId, lang) {
   ]);
 }
 
-// NUEVO: footer con conteo mejorado — muestra profesión si hay match
-async function sendInterestFooter(roomId, niche, lang, isChannel) {
-  const s          = getSession(roomId);
-  const profession = s.profession;
-  registerInterest(roomId, niche, profession);
-
-  const total     = getInterestCount(niche);
-  const sameProf  = getSameProfessionCount(niche, profession);
-
-  let msg = '';
-  if (total <= 1) {
-    msg = t(lang, 'onlyYou');
-  } else if (sameProf > 1 && profession) {
-    // Hay otros con la misma profesión — más relevante para el usuario
-    const profPlural = profession.endsWith('s') ? profession : profession + 's';
-    msg = t(lang, 'interestedProf', { n: sameProf, prof: profPlural });
-  } else {
-    msg = t(lang, 'interested', { n: total });
-  }
-  msg += '\n' + t(lang, 'connectPaid');
-  await sendMsg(roomId, msg, isChannel);
+async function sendInterestFooter(roomId, niche, lang) {
+  registerInterest(roomId, niche);
+  const count = getInterestCount(niche);
+  const msg = (count > 1 ? t(lang, 'interested', { n: count }) : t(lang, 'onlyYou')) + '\n' + t(lang, 'connectPaid');
+  await agent.sendConnectionMessage(roomId, msg);
 }
 
 // ── Flujos principales ────────────────────────────────────────────────────────
-async function runExplore(roomId, industry, lang, isChannel) {
+async function runExplore(roomId, industry, lang) {
   const session = getSession(roomId);
   session.industry = industry;
-  await sendMsg(roomId, t(lang, 'exploring'), isChannel);
+  await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
   const hn    = await searchHackerNews(industry + ' problem frustrated pain');
   const devto = await searchDevTo(industry);
   const total = hn.count + devto.count;
   if (total < 3) {
-    await sendMsg(roomId, t(lang, 'noData'), isChannel);
+    await agent.sendConnectionMessage(roomId, t(lang, 'noData'));
     await sendMenu(roomId, lang);
     return;
   }
@@ -265,60 +218,60 @@ async function runExplore(roomId, industry, lang, isChannel) {
   const analysis = await analyzeWithGroq(industry, total, hn.example || devto.example, hn.snippet, comments, lang);
   let msg = '🏭 **' + industry + '** — ' + total + (lang === 'en' ? ' discussions\n\n' : ' discusiones\n\n');
   msg += analysis || '✅ ' + (lang === 'en' ? 'Real activity detected in this niche.' : 'Actividad real detectada en este nicho.');
-  await sendMsg(roomId, msg, isChannel);
-  await sendInterestFooter(roomId, industry, lang, isChannel);
+  await agent.sendConnectionMessage(roomId, msg);
+  await sendInterestFooter(roomId, industry, lang);
   await sendMenu(roomId, lang);
 }
 
-async function runValidate(roomId, idea, lang, isChannel) {
+async function runValidate(roomId, idea, lang) {
   const session = getSession(roomId);
-  await sendMsg(roomId, t(lang, 'validating'), isChannel);
+  await agent.sendConnectionMessage(roomId, t(lang, 'validating'));
   const result = await validateIdea(idea, lang, session.industry);
   if (!result) {
-    await sendMsg(roomId, t(lang, 'noData'), isChannel);
+    await agent.sendConnectionMessage(roomId, t(lang, 'noData'));
     await sendMenu(roomId, lang);
     return;
   }
-  await sendMsg(roomId, result.analysis, isChannel);
-  await sendInterestFooter(roomId, result.niche, lang, isChannel);
+  await agent.sendConnectionMessage(roomId, result.analysis);
+  await sendInterestFooter(roomId, result.niche, lang);
   await sendMenu(roomId, lang);
 }
 
-async function runTrends(roomId, lang, isChannel) {
-  await sendMsg(roomId, t(lang, 'exploring'), isChannel);
+async function runTrends(roomId, lang) {
+  await agent.sendConnectionMessage(roomId, t(lang, 'exploring'));
   if (Object.keys(patternCount).length === 0) await analyzePatterns();
   const sorted = Object.entries(patternCount).sort((a,b) => b[1]-a[1]).slice(0,5);
-  if (!sorted.length) { await sendMsg(roomId, t(lang, 'noData'), isChannel); await sendMenu(roomId, lang); return; }
+  if (!sorted.length) { await agent.sendConnectionMessage(roomId, t(lang, 'noData')); await sendMenu(roomId, lang); return; }
   const isEs = lang !== 'en';
   let msg = isEs ? '📊 **Top oportunidades esta semana:**\n\n' : '📊 **Top opportunities this week:**\n\n';
   sorted.forEach(([kw, c], i) => { msg += (i+1) + '. ' + kw + ' → ' + c + (isEs ? ' discusiones\n' : ' discussions\n'); });
-  await sendMsg(roomId, msg, isChannel);
+  await agent.sendConnectionMessage(roomId, msg);
   const rows = sorted.map(([kw], i) => [{ text: (i+1) + '. ' + kw, callback_data: 'DEEP:' + i }]);
   rows.push([{ text: isEs ? '🔙 Volver' : '🔙 Back', callback_data: 'ACTION:menu' }]);
   await agent.sendReplyMarkupMessage('buttons', roomId, isEs ? '¿Cuál profundizas?' : 'Which one to explore?', rows);
 }
 
-async function detectIntent(text, session, roomId, isChannel) {
+async function detectIntent(text, session, roomId) {
   const lang  = session.lang;
   const lower = text.toLowerCase();
   const isEs  = lang !== 'en';
 
   if (lower.match(/valid|hay mercado|is there market|mi idea|my idea|idea de .+/i)) {
     const ideaMatch = text.match(/idea(?:\s+de)?\s+(.+)/i) || text.match(/valid(?:a(?:r)?)?\s+(.+)/i);
-    if (ideaMatch && ideaMatch[1].length > 3) { await runValidate(roomId, ideaMatch[1].trim(), lang, isChannel); return true; }
+    if (ideaMatch && ideaMatch[1].length > 3) { await runValidate(roomId, ideaMatch[1].trim(), lang); return true; }
     session.waitingFor = 'idea';
-    await sendMsg(roomId, t(lang, 'askIdea'), isChannel);
+    await agent.sendConnectionMessage(roomId, t(lang, 'askIdea'));
     return true;
   }
   if (lower.match(/problema|problem|industria|industry|sector|nicho|niche|explora|explore/i)) {
     const indMatch = text.match(/(?:en|in|industria|industry|sector)\s+(.+)/i);
-    if (indMatch && indMatch[1].length > 2) { await runExplore(roomId, indMatch[1].trim(), lang, isChannel); return true; }
+    if (indMatch && indMatch[1].length > 2) { await runExplore(roomId, indMatch[1].trim(), lang); return true; }
     session.waitingFor = 'industry';
-    await sendMsg(roomId, t(lang, 'askIndustry'), isChannel);
+    await agent.sendConnectionMessage(roomId, t(lang, 'askIndustry'));
     return true;
   }
   if (lower.match(/tendencia|trend|oportunidad|opportunity/i)) {
-    await runTrends(roomId, lang, isChannel);
+    await runTrends(roomId, lang);
     return true;
   }
   return false;
@@ -333,14 +286,7 @@ function registerHandlers() {
   agent.addCommand('/start', async ({ roomId }) => {
     const s = getSession(roomId);
     await agent.sendConnectionMessage(roomId, t(s.lang, 'welcome'));
-    // NUEVO: si es primera vez, preguntar profesión antes del menú
-    if (s.isNew) {
-      s.isNew = false;
-      s.waitingFor = 'profession';
-      await agent.sendConnectionMessage(roomId, t(s.lang, 'askProfession'));
-    } else {
-      await sendMenu(roomId, s.lang);
-    }
+    await sendMenu(roomId, s.lang);
   });
 
   agent.addCommand('/help', async ({ roomId }) => {
@@ -358,14 +304,14 @@ function registerHandlers() {
     const s    = getSession(roomId);
     const text = (message?.body?.m?.body || '').replace('/validar', '').trim();
     if (!text) { s.waitingFor = 'idea'; await agent.sendConnectionMessage(roomId, t(s.lang, 'askIdea')); return; }
-    await runValidate(roomId, text, s.lang, s.isChannel);
+    await runValidate(roomId, text, s.lang);
   });
 
   agent.addCommand('/explorar', async ({ roomId, message }) => {
     const s    = getSession(roomId);
     const text = (message?.body?.m?.body || '').replace('/explorar', '').trim();
     if (!text) { s.waitingFor = 'industry'; await agent.sendConnectionMessage(roomId, t(s.lang, 'askIndustry')); return; }
-    await runExplore(roomId, text, s.lang, s.isChannel);
+    await runExplore(roomId, text, s.lang);
   });
 
   agent.addCommand('callback_query', async ({ message, roomId }) => {
@@ -377,11 +323,11 @@ function registerHandlers() {
     if (cmd === 'ACTION') {
       if (data === 'validate') { s.waitingFor = 'idea'; await agent.sendConnectionMessage(roomId, t(lang, 'askIdea')); return; }
       if (data === 'explore')  {
-        if (s.industry) { await runExplore(roomId, s.industry, lang, s.isChannel); }
+        if (s.industry) { await runExplore(roomId, s.industry, lang); }
         else { s.waitingFor = 'industry'; await agent.sendConnectionMessage(roomId, t(lang, 'askIndustry')); }
         return;
       }
-      if (data === 'trends') { await runTrends(roomId, lang, s.isChannel); return; }
+      if (data === 'trends') { await runTrends(roomId, lang); return; }
       if (data === 'lang')   { s.lang = lang === 'es' ? 'en' : 'es'; await agent.sendConnectionMessage(roomId, s.lang === 'en' ? '🌐 Switched to English!' : '🌐 ¡Cambiado a Español!'); await sendMenu(roomId, s.lang); return; }
       if (data === 'help')   { await agent.sendConnectionMessage(roomId, t(lang, 'help')); await sendMenu(roomId, lang); return; }
       if (data === 'menu')   { await sendMenu(roomId, lang); return; }
@@ -399,7 +345,7 @@ function registerHandlers() {
         const isEs = lang !== 'en';
         let msg = '🔍 **' + kw + '**\n\n' + (analysis || (isEs ? '✅ Alta demanda detectada.' : '✅ High demand detected.'));
         await agent.sendConnectionMessage(roomId, msg);
-        await sendInterestFooter(roomId, kw, lang, s.isChannel);
+        await sendInterestFooter(roomId, kw, lang);
         await sendMenu(roomId, lang);
       }
       return;
@@ -410,40 +356,18 @@ function registerHandlers() {
     const m    = message.body && message.body.m;
     const text = (typeof m === 'object' && typeof m.body === 'string' ? m.body : message.data) || '';
     if (!text || (message.rawMessage && message.rawMessage.isBot)) return;
-    const isChannel = message.rawMessage && message.rawMessage.__typename === 'ChannelMessage';
+    const isChannel =  !!message.rawMessage && message.rawMessage.__typename === 'ChannelMessage';
     if (isChannel && message.rawMessage?.isBot) return;
 
     const s    = getSession(roomId);
-    // FIX: guardar isChannel en sesión para que los comandos también lo sepan
-    s.isChannel = isChannel;
     const lang = s.lang;
 
-    // NUEVO: capturar profesión si estamos esperándola
-    if (s.waitingFor === 'profession') {
-      s.waitingFor = null;
-      s.profession = text.trim();
-      // Si no tiene industry guardada, usar profesión como industry por defecto
-      if (!s.industry) s.industry = text.trim();
-      await sendMsg(roomId, t(lang, 'professionSaved'), isChannel);
-      await sendMenu(roomId, lang);
-      return;
-    }
-
     // Respuesta a pregunta pendiente
-    if (s.waitingFor === 'industry') { s.waitingFor = null; await runExplore(roomId, text.trim(), lang, isChannel); return; }
-    if (s.waitingFor === 'idea')     { s.waitingFor = null; await runValidate(roomId, text.trim(), lang, isChannel); return; }
-
-    // NUEVO: primer mensaje de un usuario nuevo que no usó /start
-    if (s.isNew) {
-      s.isNew = false;
-      await sendMsg(roomId, t(lang, 'welcome'), isChannel);
-      s.waitingFor = 'profession';
-      await sendMsg(roomId, t(lang, 'askProfession'), isChannel);
-      return;
-    }
+    if (s.waitingFor === 'industry') { s.waitingFor = null; await runExplore(roomId, text.trim(), lang); return; }
+    if (s.waitingFor === 'idea')     { s.waitingFor = null; await runValidate(roomId, text.trim(), lang); return; }
 
     // Detectar intención
-    const handled = await detectIntent(text, s, roomId, isChannel);
+    const handled = await detectIntent(text, s, roomId);
     if (handled) return;
 
     // Respuesta abierta con Groq
@@ -459,9 +383,8 @@ function registerHandlers() {
           ], max_tokens: 300 },
           { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
         );
-        await sendMsg(roomId, r.data.choices[0].message.content, isChannel);
-      } catch(e) {
-        await sendMsg(roomId, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?', isChannel);
+       await sendMsg(roomId, r.data.choices[0].message.content, isChannel);
+       await sendMsg(roomId, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?', isChannel);
       }
     }
     await sendMenu(roomId, lang);
