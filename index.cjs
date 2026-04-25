@@ -337,7 +337,7 @@ async function detectIntent(text, session, roomId, isChannel = false) {
   const lang  = session.lang;
   const lower = text.toLowerCase();
   // Saludo o mensaje abierto corto → bienvenida con menú
-if (lower.match(/^(hola|hello|hi|hey|buenas|buenos|good|start|inicio|comenzar|empezar|ayuda|help|\s*)$/) || lower.length < 12) {
+if (lower.match(/^(hola|hello|hi|hey|buenas|buenos|good|start|inicio|comenzar|empezar|ayuda|help|\s*)$/)) {
   const isEs = lang !== 'en';
   const greeting = isEs
     ? '👋 ¡Hola! Soy **IdeaScout**. ¿Por dónde empezamos?'
