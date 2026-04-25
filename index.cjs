@@ -25,10 +25,30 @@ if (agent) {
   };
 }
 
+// ── Helpers de envío ──────────────────────────────────────────────────────────
 async function sendMsg(roomId, text, isChannel = false) {
   if (!agent) return;
   if (isChannel) return agent.sendChannelMessage(roomId, text);
   return agent.sendConnectionMessage(roomId, text);
+}
+
+async function sendMenu(roomId, lang, isChannel = false) {
+  const isEs = lang !== 'en';
+  const buttons = [
+    [
+      { text: '✅ ' + (isEs ? 'Validar mi idea' : 'Validate my idea'), callback_data: 'ACTION:validate' },
+      { text: '🔭 ' + (isEs ? 'Explorar nichos' : 'Explore niches'),   callback_data: 'ACTION:explore'  },
+    ],
+    [
+      { text: '📊 ' + (isEs ? 'Tendencias'      : 'Trends'),           callback_data: 'ACTION:trends'   },
+      { text: '🌐 ' + (isEs ? 'English'         : 'Español'),          callback_data: 'ACTION:lang'     },
+    ],
+    [{ text: '❓ ' + (isEs ? 'Ayuda'            : 'Help'),             callback_data: 'ACTION:help'     }],
+  ];
+  await agent.sendReplyMarkupMessage(
+    'buttons', roomId, t(lang, 'menuLabel'), buttons, {},
+    isChannel ? 'channel' : 'chat'
+  );
 }
 
 // ── Sesiones ──────────────────────────────────────────────────────────────────
@@ -179,23 +199,7 @@ function t(lang, key, vars) {
   return Object.entries(vars).reduce((s, [k, v]) => s.replace('{' + k + '}', v), str);
 }
 
-// ── UI helpers ────────────────────────────────────────────────────────────────
-async function sendMenu(roomId, lang, isChannel = false) {
-  const isEs = lang !== 'en';
-  const buttons = [
-    [
-      { text: '✅ ' + (isEs ? 'Validar mi idea' : 'Validate my idea'), callback_data: 'ACTION:validate' },
-      { text: '🔭 ' + (isEs ? 'Explorar nichos' : 'Explore niches'),   callback_data: 'ACTION:explore'  },
-    ],
-    [
-      { text: '📊 ' + (isEs ? 'Tendencias'      : 'Trends'),           callback_data: 'ACTION:trends'   },
-      { text: '🌐 ' + (isEs ? 'English'         : 'Español'),          callback_data: 'ACTION:lang'     },
-    ],
-    [{ text: '❓ ' + (isEs ? 'Ayuda'            : 'Help'),             callback_data: 'ACTION:help'     }],
-  ];
-  await agent.sendReplyMarkupMessage('buttons', roomId, t(lang, 'menuLabel'), buttons, {}, isChannel ? 'channel' : 'chat');
-}
-
+// ── Flujos principales ────────────────────────────────────────────────────────
 async function sendInterestFooter(roomId, niche, lang, isChannel = false) {
   registerInterest(roomId, niche);
   const count = getInterestCount(niche);
@@ -203,7 +207,6 @@ async function sendInterestFooter(roomId, niche, lang, isChannel = false) {
   await sendMsg(roomId, msg, isChannel);
 }
 
-// ── Flujos principales ────────────────────────────────────────────────────────
 async function runExplore(roomId, industry, lang, isChannel = false) {
   const session = getSession(roomId);
   session.industry = industry;
@@ -367,25 +370,52 @@ function registerHandlers() {
   });
 
   agent.addCommand('message', async ({ message, roomId }) => {
-    const m         = message.body && message.body.m;
-    const text      = (typeof m === 'object' && typeof m.body === 'string' ? m.body : message.data) || '';
+    const m    = message.body && message.body.m;
+    const text = (typeof m === 'object' && typeof m.body === 'string' ? m.body : message.data) || '';
     if (!text || (message.rawMessage && message.rawMessage.isBot)) return;
 
-    const isChannel = !!message.rawMessage && message.rawMessage.__typename === 'ChannelMessage';
-    if (isChannel && !text.startsWith('/')) {
-      // En canal solo responde a comandos — texto libre solo en DM
+    // ── Detectar si es canal o DM ──────────────────────────────────────────
+    const isChannel  = message.rawMessage?.__typename === 'ChannelMessage';
+    const actualRoom = isChannel ? (message.rawMessage?.roomId || roomId) : roomId;
+
+    console.log('[IdeaScout] message | isChannel:', isChannel, '| roomId:', actualRoom, '| text:', text.slice(0, 60));
+
+    const s    = getSession(actualRoom);
+    const lang = s.lang;
+
+    // En canal solo responder a comandos o texto libre que no sea ruido
+    if (isChannel && text.startsWith('/')) {
+      if (text === '/start' || text === '/hola') {
+        await sendMsg(actualRoom, t(lang, 'welcome'), true);
+        await sendMenu(actualRoom, lang, true);
+      } else if (text === '/menu') {
+        await sendMenu(actualRoom, lang, true);
+      } else if (text === '/validar') {
+        s.waitingFor = 'idea';
+        await sendMsg(actualRoom, t(lang, 'askIdea'), true);
+      } else if (text === '/explorar') {
+        s.waitingFor = 'industry';
+        await sendMsg(actualRoom, t(lang, 'askIndustry'), true);
+      } else if (text === '/tendencias') {
+        await runTrends(actualRoom, lang, true);
+      } else if (text === '/help') {
+        await sendMsg(actualRoom, t(lang, 'help'), true);
+        await sendMenu(actualRoom, lang, true);
+      }
       return;
     }
 
-    const s    = getSession(roomId);
-    const lang = s.lang;
+    // En canal sin comando — ignorar para no spamear
+    if (isChannel) return;
 
-    if (s.waitingFor === 'industry') { s.waitingFor = null; await runExplore(roomId, text.trim(), lang); return; }
-    if (s.waitingFor === 'idea')     { s.waitingFor = null; await runValidate(roomId, text.trim(), lang); return; }
+    // ── DM: flujo completo ─────────────────────────────────────────────────
+    if (s.waitingFor === 'industry') { s.waitingFor = null; await runExplore(actualRoom, text.trim(), lang); return; }
+    if (s.waitingFor === 'idea')     { s.waitingFor = null; await runValidate(actualRoom, text.trim(), lang); return; }
 
-    const handled = await detectIntent(text, s, roomId, isChannel);
+    const handled = await detectIntent(text, s, actualRoom);
     if (handled) return;
 
+    // Saludo o texto libre → respuesta con Groq + menú
     if (GROQ_API_KEY) {
       try {
         const isEs = lang !== 'en';
@@ -398,12 +428,12 @@ function registerHandlers() {
           ], max_tokens: 300 },
           { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
         );
-        await sendMsg(roomId, r.data.choices[0].message.content, isChannel);
+        await agent.sendConnectionMessage(actualRoom, r.data.choices[0].message.content);
       } catch(e) {
-        await sendMsg(roomId, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?', isChannel);
+        await agent.sendConnectionMessage(actualRoom, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?');
       }
     }
-    await sendMenu(roomId, lang, isChannel);
+    await sendMenu(actualRoom, lang, false);
   });
 
   console.log('[IdeaScout] Handlers registrados ✅');
@@ -417,7 +447,6 @@ app.post('/webhook', async (req, res) => {
     const payload = req.body;
     if (payload && payload.challenge) return;
     registerHandlers();
-    console.log('[DEBUG] payload:', JSON.stringify(payload, null, 2));
     await agent.processRequest(payload);
   } catch(e) { console.error('[IdeaScout] Webhook error:', e.message); }
 });
