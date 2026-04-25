@@ -417,6 +417,7 @@ app.post('/webhook', async (req, res) => {
     const payload = req.body;
     if (payload && payload.challenge) return;
     registerHandlers();
+    console.log('[DEBUG] payload:', JSON.stringify(payload, null, 2));
     await agent.processRequest(payload);
   } catch(e) { console.error('[IdeaScout] Webhook error:', e.message); }
 });
