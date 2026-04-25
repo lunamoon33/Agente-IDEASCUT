@@ -384,6 +384,7 @@ function registerHandlers() {
           { headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
         );
        await sendMsg(roomId, r.data.choices[0].message.content, isChannel);
+          } catch(e) {
        await sendMsg(roomId, lang === 'en' ? 'How can I help you?' : '¿En qué te ayudo?', isChannel);
       }
     }
