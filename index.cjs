@@ -23,12 +23,7 @@ if (agent) {
     if (rm?.memberId)  return rm.memberId;
     return '';
   };
-  const proto = Object.getPrototypeOf(agent);
-  proto.sendChannelMessage = async function(channelId, message, options) {
-    const msgBody = { body: JSON.stringify({ m: encodeURIComponent(JSON.stringify({ body: message })), t: 'channel' }) };
-    return this.client.sendChannelMessage(channelId, { message: msgBody, isSilent: options?.isSilent || false });
-  };
-}
+
 async function sendMsg(roomId, text, isChannel = false) {
   if (!agent) return;
   if (isChannel) return agent.sendChannelMessage(roomId, text);
@@ -181,7 +176,7 @@ function t(lang, key, vars) {
 // ── UI helpers ────────────────────────────────────────────────────────────────
 async function sendMenu(roomId, lang) {
   const isEs = lang !== 'en';
-  await agent.sendReplyMarkupMessage('buttons', roomId, t(lang, 'menuLabel'), [
+  await agent.sendReplyMarkupMessage('buttons', roomId, texto, botones, {}, 'channel'); [
     [
       { text: '✅ ' + (isEs ? 'Validar mi idea'    : 'Validate my idea'), callback_data: 'ACTION:validate' },
       { text: '🔭 ' + (isEs ? 'Explorar nichos'    : 'Explore niches'),   callback_data: 'ACTION:explore'  },
